@@ -1,0 +1,6 @@
+name: azure-workload-example
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Example deploying a multi-process app to Azure Container Apps using @opsen/azure

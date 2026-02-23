@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/infra" },
+    { "path": "packages/platform" },
+    { "path": "packages/k8s" },
+    { "path": "packages/docker" },
+    { "path": "packages/azure" }
+  ]
+}
