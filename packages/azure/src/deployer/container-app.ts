@@ -208,7 +208,7 @@ export class ContainerAppDeployer {
       resourceGroupName: this.args.resourceGroupName,
       environmentId: this.args.environmentId,
       location: this.args.location,
-      workloadProfileType: spec.workloadProfileName,
+      ...(spec.workloadProfileName ? { workloadProfileType: spec.workloadProfileName } : {}),
       configuration: {
         ingress,
         registries: registries.length > 0 ? registries : undefined,
