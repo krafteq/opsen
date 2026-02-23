@@ -1,0 +1,6 @@
+name: docker-workload-example
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Example deploying a multi-process app to Docker using @opsen/docker
