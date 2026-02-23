@@ -5,6 +5,7 @@
     { "path": "packages/platform" },
     { "path": "packages/k8s" },
     { "path": "packages/docker" },
-    { "path": "packages/azure" }
+    { "path": "packages/azure" },
+    { "path": "packages/testing" }
   ]
 }
