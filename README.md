@@ -7,22 +7,24 @@ See [SPEC.md](./SPEC.md) for the full project vision and design rationale.
 ## Packages
 
 ```text
-@opsen/infra              ← facts, config, deployer pipeline
-    ↑
-@opsen/platform           ← workload model, RuntimeDeployer interface
+@opsen/platform           ← workload model, RuntimeDeployer interface (standalone)
+@opsen/base-ops           ← facts, FactStore, config, deployer pipeline (standalone)
     ↑           ↑            ↑
-@opsen/k8s   @opsen/docker   @opsen/azure
+@opsen/k8s   @opsen/docker   @opsen/azure      ← runtime deployers (depend on platform)
+    ↑
+@opsen/k8s-ops            ← cluster components (depends on platform, k8s)
 ```
 
 Runtime packages are independently installable and never depend on each other.
 
-| Package           | Description                                                           |
-| ----------------- | --------------------------------------------------------------------- |
-| `@opsen/infra`    | Infrastructure facts, cross-stack config, deployer primitives         |
-| `@opsen/platform` | Workload type system, runtime abstractions, RuntimeDeployer interface |
-| `@opsen/k8s`      | Kubernetes runtime — Deployments, Services, Ingress, PVCs             |
-| `@opsen/docker`   | Docker single-host runtime with Caddy reverse proxy for ingress       |
-| `@opsen/azure`    | Azure Container Apps runtime with native ingress                      |
+| Package           | Description                                                              |
+| ----------------- | ------------------------------------------------------------------------ |
+| `@opsen/platform` | Workload type system, runtime abstractions, RuntimeDeployer interface    |
+| `@opsen/base-ops` | Infrastructure facts, FactStore abstraction, deployer pipeline           |
+| `@opsen/k8s`      | Kubernetes runtime — Deployments, Services, Ingress, PVCs                |
+| `@opsen/docker`   | Docker single-host runtime with Caddy reverse proxy for ingress          |
+| `@opsen/azure`    | Azure Container Apps runtime with native ingress                         |
+| `@opsen/k8s-ops`  | Generic K8s cluster components (cert-manager, ingress-nginx, monitoring) |
 
 ## Quick Start
 

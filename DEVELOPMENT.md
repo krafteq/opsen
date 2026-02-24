@@ -8,13 +8,14 @@ All packages are implemented and building. No published npm releases yet.
 
 - Monorepo setup (pnpm workspaces, composite tsconfig, changesets)
 - `@opsen/platform` — standalone workload type system, RuntimeDeployer interface, utility types
-- `@opsen/base-ops` — facts system, deployer pipeline, config management (renamed from `@opsen/infra`)
+- `@opsen/base-ops` — facts system, FactStore abstraction, deployer pipeline, config management (renamed from `@opsen/infra`)
 - `@opsen/k8s` — Kubernetes deployer (Deployments, Services, Ingress, PVCs, ConfigMaps) + building blocks
 - `@opsen/docker` — Docker deployer with Caddy reverse proxy for ingress + building blocks
 - `@opsen/azure` — Azure Container Apps deployer + building blocks
 - `@opsen/k8s-ops` — Generic K8s cluster components (cert-manager, ingress-nginx, external-dns, Prometheus, Loki, OAuth2, MinIO, Kafka)
 - Building block functions extracted as public API for each runtime
-- Unit tests for building blocks (parseResourceRequirements, generateCaddyfile, buildContainerAppSpec)
+- FactStore abstraction (`FactStoreReader`, `FactStoreWriter`, `PulumiFactStore`) for storage-agnostic fact sharing
+- Unit tests for building blocks (parseResourceRequirements, generateCaddyfile, buildContainerAppSpec) and FactStore
 - E2e testing framework for runtime deployers
 - Examples for Docker and Azure workloads
 
