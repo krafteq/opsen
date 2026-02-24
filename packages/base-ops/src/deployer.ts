@@ -6,6 +6,7 @@ import { InfrastructureFactsPool } from './facts-pool'
 import { InfrastructureConfig } from './config'
 import { InfrastructureModule } from './module'
 import { FactsApi } from './facts-api'
+import type { FactStoreReader, FactStoreWriter } from './fact-store'
 
 export abstract class InfrastructureDeployer<
   TFactApi extends FactsApi,
@@ -22,7 +23,18 @@ export abstract class InfrastructureDeployer<
   public constructor(args: TArgs) {
     this.args = args
     this.owner = `${pulumi.getOrganization()}/${pulumi.getProject()}/${pulumi.getStack()}`
-    this.configs = new InfrastructureConfigReader(this.args.configStacks ?? []).read()
+
+    const stackConfigs = new InfrastructureConfigReader(this.args.configStacks ?? []).read()
+
+    const storeConfigs = this.args.factSources?.length
+      ? pulumi.output(
+          Promise.all(this.args.factSources.map((s) => s.read())).then((configs) =>
+            configs.map((c) => c ?? { facts: [] }),
+          ),
+        )
+      : pulumi.output([] as InfrastructureConfig[])
+
+    this.configs = pulumi.all([stackConfigs, storeConfigs]).apply(([a, b]) => [...a, ...b])
     this._facts = this.rebuildFacts(undefined)
   }
 
@@ -41,7 +53,12 @@ export abstract class InfrastructureDeployer<
       })
     }
 
-    return deployRec(0)
+    return deployRec(0).apply((finalConfig) => {
+      if (this.args.factSink) {
+        return pulumi.output(this.args.factSink.write(finalConfig).then(() => finalConfig))
+      }
+      return pulumi.output(finalConfig)
+    })
   }
 
   private deploySingle(deployable: Deployable<TFactApi>): pulumi.Output<InfrastructureConfig> {
@@ -94,7 +111,10 @@ export abstract class InfrastructureDeployer<
 }
 
 export interface InfrastructureDeployerArgs {
+  /** @deprecated Use factSources with PulumiFactStore instead */
   configStacks?: pulumi.Input<pulumi.Input<string>[]>
+  factSources?: FactStoreReader[]
+  factSink?: FactStoreWriter
 }
 
 type FactType<TFactApi> = TFactApi extends FactsApi<infer TFact> ? TFact : never
