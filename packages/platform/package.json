@@ -2,8 +2,7 @@
   "name": "@opsen/platform",
   "version": "0.1.0",
   "description": "Platform abstractions: workloads, runtimes, and runtime deployers",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
   "files": [
     "dist"
   ],
@@ -24,6 +23,8 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts"
   }
 }

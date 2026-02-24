@@ -2,8 +2,7 @@
   "name": "@opsen/azure",
   "version": "0.1.0",
   "description": "Azure Container Apps runtime deployer for Opsen platform",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
   "files": [
     "dist"
   ],
@@ -27,6 +26,8 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts"
   }
 }

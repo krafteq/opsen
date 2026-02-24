@@ -2,8 +2,7 @@
   "name": "@opsen/k8s-ops",
   "version": "0.1.0",
   "description": "Generic Kubernetes cluster components: cert-manager, ingress-nginx, external-dns, monitoring, and more",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
   "files": [
     "dist"
   ],
@@ -28,6 +27,8 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts"
   }
 }
