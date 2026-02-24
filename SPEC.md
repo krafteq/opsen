@@ -39,7 +39,7 @@ The typical Opsen user is a small-to-medium team that:
 
 **Pulumi-native.** Opsen doesn't wrap Pulumi or introduce its own state management. It produces standard Pulumi resources. You can mix Opsen-deployed workloads with hand-written Pulumi code in the same program.
 
-**Facts for cross-stack state.** Complex setups often span multiple Pulumi stacks (networking in one, platform in another, workloads in a third). `@opsen/infra` provides a typed facts system for passing structured state between stacks via StackReferences, without ad-hoc output parsing.
+**Facts for cross-stack state.** Complex setups often span multiple Pulumi stacks (networking in one, platform in another, workloads in a third). `@opsen/base-ops` provides a typed facts system for passing structured state between stacks without ad-hoc output parsing. The FactStore abstraction (`FactStoreReader` / `FactStoreWriter`) decouples fact storage from Pulumi StackReferences, so teams can share facts via any backend (Vault, Azure Key Vault, S3, etc.).
 
 ## What Opsen Is Not
 
@@ -50,13 +50,14 @@ The typical Opsen user is a small-to-medium team that:
 
 ## Packages
 
-### @opsen/infra
+### @opsen/base-ops
 
 Low-level primitives for multi-stack Pulumi projects:
 
 - **Facts** — typed data objects (kind + metadata + spec) that flow between stacks. Think of them as lightweight CRDs for your infrastructure state.
 - **Facts Pool** — indexed collection with O(1) lookup by kind+name and label-based filtering.
-- **Deployer** — sequential module execution pipeline that accumulates facts as side effects.
+- **FactStore** — storage-agnostic abstraction for reading and writing facts. `FactStoreReader` and `FactStoreWriter` are Pulumi-free interfaces; `PulumiFactStore` provides the StackReference-backed implementation. Custom implementations can target any backend (Vault, Key Vault, S3, a database).
+- **Deployer** — sequential module execution pipeline that accumulates facts as side effects. Accepts both legacy `configStacks` (StackReference-based) and `factSources` / `factSink` (FactStore-based) for reading and writing facts.
 - **Config** — cross-stack configuration reader and merger.
 
 This package has no opinion about workloads or containers. It's useful on its own for any multi-stack Pulumi project that needs structured state sharing.
@@ -67,7 +68,7 @@ The application model:
 
 - **Workload** — processes, endpoints, volumes, files, health checks, environment variables. Parameterized by a runtime type for platform-specific extensions.
 - **RuntimeDeployer** — interface that each runtime implements. Takes a Workload, returns DeployedWorkload (with resolved endpoints and process handles).
-- **WorkloadModule** — bridges RuntimeDeployer into the `@opsen/infra` deployer pipeline, exposing deployment results as facts.
+- **WorkloadModule** — bridges RuntimeDeployer into the `@opsen/base-ops` deployer pipeline, exposing deployment results as facts.
 - **Runtime types** — `KubernetesRuntime`, `DockerRuntime`, `AzureContainerAppsRuntime`. Each defines what platform-specific fields are available.
 
 ### @opsen/k8s
@@ -104,6 +105,21 @@ Azure Container Apps RuntimeDeployer. For each workload:
 - Supports CORS policies, registry credentials, and workload profiles
 - Mounts volumes via AzureFile or EmptyDir storage
 
+### @opsen/k8s-ops
+
+Reusable Kubernetes cluster components for common infrastructure needs:
+
+- **cert-manager** — TLS certificate management with configurable issuers
+- **ingress-nginx** — NGINX ingress controller
+- **external-dns** — Automatic DNS record management (Cloudflare)
+- **Prometheus stack** — Monitoring with Prometheus, Grafana, and Alertmanager
+- **Loki** — Log aggregation
+- **OAuth2 proxy** — Authentication proxy
+- **MinIO** — S3-compatible object storage operator
+- **Kafka** — Kafka operator (Strimzi)
+
+Provides a `KubernetesOpsDeployer` that orchestrates these components together, built on the `@opsen/base-ops` deployer pipeline.
+
 ## How Runtime-Specific Extensions Work
 
 The Workload type is generic over a runtime parameter. Each runtime defines optional fields at four levels:
@@ -122,4 +138,4 @@ These fields are invisible when writing runtime-agnostic code and fully type-che
 - **More runtimes.** AWS ECS/Fargate and Google Cloud Run are natural next targets.
 - **Resource providers.** The internal platform that consumes Opsen has resource providers for managed databases, object storage, and email. A generic resource provider interface in `@opsen/platform` could make these shareable.
 - **Validation.** Pre-deployment validation that catches misconfigurations (e.g., ingress endpoint without ports, volume mount without volume definition) before `pulumi up`.
-- **Testing utilities.** Helpers for writing unit tests against workload definitions without needing a real Pulumi engine.
+- **More FactStore implementations.** The FactStore abstraction is in place; community implementations for HashiCorp Vault, Azure Key Vault, AWS Secrets Manager, and other backends are natural extensions.
