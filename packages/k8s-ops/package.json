@@ -1,7 +1,7 @@
 {
-  "name": "@opsen/infra",
+  "name": "@opsen/k8s-ops",
   "version": "0.1.0",
-  "description": "Infrastructure facts, deployer, and module system for Pulumi",
+  "description": "Generic Kubernetes cluster components: cert-manager, ingress-nginx, external-dns, monitoring, and more",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -13,7 +13,11 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@pulumi/pulumi": "^3.152.0"
+    "@opsen/platform": "file:../platform",
+    "@opsen/k8s": "file:../k8s",
+    "@pulumi/kubernetes": "^4.21.1",
+    "@pulumi/pulumi": "^3.152.0",
+    "@pulumi/random": "^4.16.3"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.0",

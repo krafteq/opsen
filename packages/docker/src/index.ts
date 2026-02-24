@@ -1,3 +1,4 @@
 export * from './runtime-deployer'
 export * from './workload'
 export * from './ingress'
+export * from './building-blocks'

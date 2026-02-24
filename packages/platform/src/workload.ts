@@ -1,6 +1,6 @@
 import * as pulumi from '@pulumi/pulumi'
 import { NoSpecificRuntime, WorkloadRuntime } from './runtime'
-import { TwoLevelPartial } from '@opsen/infra'
+import { TwoLevelPartial } from './utils/types'
 
 export type Workload<TPlatformSpecifics extends WorkloadRuntime<any, any, any, any> = NoSpecificRuntime> =
   TPlatformSpecifics extends WorkloadRuntime<infer TWorkload, unknown, unknown>

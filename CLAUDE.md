@@ -10,20 +10,24 @@ This is a **library monorepo** — there is no CLI. All packages are published t
 
 ## Packages
 
-| Package           | Description                                                     |
-| ----------------- | --------------------------------------------------------------- |
-| `@opsen/infra`    | Facts system, deployer pipeline, config management              |
-| `@opsen/platform` | Workload type system, RuntimeDeployer interface, WorkloadModule |
-| `@opsen/k8s`      | Kubernetes runtime deployer                                     |
-| `@opsen/docker`   | Docker single-host deployer with Caddy ingress                  |
-| `@opsen/azure`    | Azure Container Apps runtime deployer                           |
+| Package           | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `@opsen/platform` | Workload type system, RuntimeDeployer interface, utility types (standalone) |
+| `@opsen/base-ops` | Facts system, deployer pipeline, config management                          |
+| `@opsen/k8s`      | Kubernetes runtime deployer + building blocks                               |
+| `@opsen/docker`   | Docker single-host deployer with Caddy ingress + building blocks            |
+| `@opsen/azure`    | Azure Container Apps runtime deployer + building blocks                     |
+| `@opsen/k8s-ops`  | Generic K8s cluster components (cert-manager, ingress-nginx, monitoring)    |
 
 ### Dependency Graph
 
 ```text
-infra <- platform <- k8s
-                  <- docker
-                  <- azure
+@opsen/platform   (standalone — workload types, RuntimeDeployer, interfaces)
+@opsen/base-ops   (standalone — renamed from infra — facts, modules, pipeline)
+@opsen/k8s        → platform
+@opsen/docker     → platform
+@opsen/azure      → platform
+@opsen/k8s-ops    → platform, k8s
 ```
 
 Inter-package dependencies use `file:` relative paths (not `workspace:*`) so external consumers can reference opsen packages via `file:` during development.
@@ -56,9 +60,17 @@ The core abstraction is the `Workload` type in `@opsen/platform`. It describes p
 
 Each runtime package implements `RuntimeDeployer` from `@opsen/platform`. It takes a `Workload` and returns a `DeployedWorkload` with resolved endpoints and process handles. The deployer is a pure function of the workload description — no imperative orchestration.
 
+### Building Blocks
+
+Each runtime deployer also exports standalone building-block functions (e.g. `parseResourceRequirements`, `generateCaddyfile`, `buildContainerAppSpec`) that can be used independently without the full deployer pipeline.
+
 ### Facts System
 
-`@opsen/infra` provides a typed facts system for passing structured state between Pulumi stacks. Facts are kind+metadata+spec objects indexed in a FactsPool for O(1) lookup by kind+name.
+`@opsen/base-ops` provides a typed facts system for passing structured state between Pulumi stacks. Facts are kind+metadata+spec objects indexed in a FactsPool for O(1) lookup by kind+name.
+
+### K8s Ops Components
+
+`@opsen/k8s-ops` provides reusable Kubernetes cluster components (cert-manager, ingress-nginx, external-dns, Prometheus, Loki, OAuth2 proxy, MinIO, Kafka) and a `KubernetesOpsDeployer` that orchestrates them.
 
 ### Build System
 

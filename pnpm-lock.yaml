@@ -115,9 +115,6 @@ importers:
 
   packages/azure:
     dependencies:
-      '@opsen/infra':
-        specifier: file:../infra
-        version: link:../infra
       '@opsen/platform':
         specifier: file:../platform
         version: link:../platform
@@ -138,11 +135,21 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/base-ops:
+    dependencies:
+      '@pulumi/pulumi':
+        specifier: ^3.152.0
+        version: 3.223.0(typescript@5.9.3)
+    devDependencies:
+      '@tsconfig/node22':
+        specifier: ^22.0.0
+        version: 22.0.5
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/docker:
     dependencies:
-      '@opsen/infra':
-        specifier: file:../infra
-        version: link:../infra
       '@opsen/platform':
         specifier: file:../platform
         version: link:../platform
@@ -163,24 +170,8 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  packages/infra:
-    dependencies:
-      '@pulumi/pulumi':
-        specifier: ^3.152.0
-        version: 3.223.0(typescript@5.9.3)
-    devDependencies:
-      '@tsconfig/node22':
-        specifier: ^22.0.0
-        version: 22.0.5
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
   packages/k8s:
     dependencies:
-      '@opsen/infra':
-        specifier: file:../infra
-        version: link:../infra
       '@opsen/platform':
         specifier: file:../platform
         version: link:../platform
@@ -207,11 +198,33 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/k8s-ops:
+    dependencies:
+      '@opsen/k8s':
+        specifier: file:../k8s
+        version: link:../k8s
+      '@opsen/platform':
+        specifier: file:../platform
+        version: link:../platform
+      '@pulumi/kubernetes':
+        specifier: ^4.21.1
+        version: 4.26.0(typescript@5.9.3)
+      '@pulumi/pulumi':
+        specifier: ^3.152.0
+        version: 3.223.0(typescript@5.9.3)
+      '@pulumi/random':
+        specifier: ^4.16.3
+        version: 4.19.1(typescript@5.9.3)
+    devDependencies:
+      '@tsconfig/node22':
+        specifier: ^22.0.0
+        version: 22.0.5
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/platform:
     dependencies:
-      '@opsen/infra':
-        specifier: file:../infra
-        version: link:../infra
       '@pulumi/pulumi':
         specifier: ^3.152.0
         version: 3.223.0(typescript@5.9.3)
@@ -892,6 +905,9 @@ packages:
         optional: true
       typescript:
         optional: true
+
+  '@pulumi/random@4.19.1':
+    resolution: {integrity: sha512-gDotQyxtl+pcJb4oaGfbi6PsK8OtzjBmF1D8PYLvr13kCup98KTIIv/8wF2xbgbFf7ljJn3EblADxZ0u8AC/Dg==}
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
     resolution: {integrity: sha512-upnNBkA6ZH2VKGcBj9Fyl9IGNPULcjXRlg0LLeaioQWueH30p6IXtJEbKAgvyv+mJaMxSm1l6xwDXYjpEMiLMg==}
@@ -4224,6 +4240,14 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - supports-color
+
+  '@pulumi/random@4.19.1(typescript@5.9.3)':
+    dependencies:
+      '@pulumi/pulumi': 3.223.0(typescript@5.9.3)
+    transitivePeerDependencies:
+      - supports-color
+      - ts-node
+      - typescript
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
     optional: true

@@ -1,0 +1,29 @@
+{
+  "name": "@opsen/base-ops",
+  "version": "0.1.0",
+  "description": "Infrastructure facts, deployer, and module system for Pulumi",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.152.0"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -3,6 +3,8 @@ import * as k8s from '@pulumi/kubernetes'
 import * as pulumi from '@pulumi/pulumi'
 import * as _ from 'lodash'
 import { ComputeResources, StorageClassRequest, StorageClassMeta, ResourceRequirements } from '@opsen/platform'
+import { parseResourceRequirements } from '../building-blocks/resource-requirements'
+import { resolveStorageClass } from '../building-blocks/storage-class'
 
 export interface KubernetesDeployParams {
   name: string
@@ -49,39 +51,13 @@ export class KubernetesDeployer<TParams extends KubernetesDeployParams = Kuberne
   }
 
   protected getResourceRequirements(req: ComputeResources): ResourceRequirements {
-    const [cpu, memory] = typeof req == 'string' ? req.split(',') : [req.cpu, req.memory]
-
-    return {
-      requests: {
-        cpu: cpu.split('/')[0],
-        memory: memory.split('/')[0],
-      },
-      limits: {
-        cpu: cpu.split('/')[1],
-        memory: memory.split('/')[1],
-      },
-    }
+    return parseResourceRequirements(req)
   }
 
   protected storageClass(
     request: StorageClassRequest,
     opts?: { failIfNoMatch: boolean },
   ): pulumi.Output<string | undefined> {
-    if (typeof request == 'string') return pulumi.output(request)
-
-    return this.storageClasses.apply((all) => {
-      const match = all.filter((x) => {
-        for (const item of _.entries(request)) {
-          if (x.labels[item[0]] != item[1]) return false
-        }
-
-        return true
-      })
-
-      if (match.length == 0 && opts?.failIfNoMatch == true)
-        throw new Error(`storage class for ${JSON.stringify(request)} not found`)
-
-      return match[0]?.name
-    })
+    return resolveStorageClass(request, this.storageClasses, opts)
   }
 }
