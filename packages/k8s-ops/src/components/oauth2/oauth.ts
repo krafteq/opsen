@@ -26,7 +26,10 @@ export class Oauth extends pulumi.ComponentResource {
   public readonly publicHost: pulumi.Output<string>
 
   constructor(name: string, args: OAuthArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:Oauth', name, args, opts)
+    super('opsen-k8s-ops:Oauth', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:Oauth' }],
+    })
 
     const helmOverride = pulumi.output(args.helmOverride)
     const provider = pulumi.output(args.provider)

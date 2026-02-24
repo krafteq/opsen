@@ -17,7 +17,10 @@ export interface CloudflareProvider {
 
 export class ExternalDns extends pulumi.ComponentResource {
   public constructor(name: string, args: ExternalDnsArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:ExternalDns', name, args, opts)
+    super('opsen-k8s-ops:ExternalDns', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:ExternalDns' }],
+    })
 
     const helmOverride = pulumi.output(args.helmOverride)
     const meta = pulumi.output({

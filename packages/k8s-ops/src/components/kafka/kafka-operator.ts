@@ -13,7 +13,10 @@ export class KafkaOperator extends pulumi.ComponentResource {
   public readonly chart: k8s.helm.v3.Release
 
   public constructor(name: string, args: KafkaOperatorArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:KafkaOperator', name, args, opts)
+    super('opsen-k8s-ops:KafkaOperator', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:KafkaOperator' }],
+    })
 
     const values = pulumi.Output.create(args.watchNamespaces).apply((namespaces) => {
       return {

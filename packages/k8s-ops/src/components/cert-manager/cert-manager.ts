@@ -37,7 +37,10 @@ export class CertManager extends pulumi.ComponentResource {
   public readonly issuers: CertificateIssuer[]
 
   public constructor(name: string, args: CertManagerArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:CertManager', name, args, opts)
+    super('opsen-k8s-ops:CertManager', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:CertManager' }],
+    })
 
     this.issuers = []
 

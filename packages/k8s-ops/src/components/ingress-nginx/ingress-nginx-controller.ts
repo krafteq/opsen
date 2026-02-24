@@ -16,7 +16,10 @@ export class IngressNginxController extends pulumi.ComponentResource {
   public readonly publicIP?: pulumi.Output<string>
 
   public constructor(name: string, args: IngressNginxControllerArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:IngressNginxController', name, args, opts)
+    super('opsen-k8s-ops:IngressNginxController', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:IngressNginxController' }],
+    })
 
     const helmOverride = pulumi.output(args.helmOverride)
     const meta = pulumi.output({

@@ -17,7 +17,10 @@ export class MinioOperator extends pulumi.ComponentResource {
   public readonly publicHost?: string
 
   public constructor(name: string, args: MinioOperatorArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:MinioOperator', name, args, opts)
+    super('opsen-k8s-ops:MinioOperator', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:MinioOperator' }],
+    })
 
     const ingressValues: any = {
       enabled: false,

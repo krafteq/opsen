@@ -19,7 +19,10 @@ export class Loki extends pulumi.ComponentResource {
   public readonly clusterUrl: pulumi.Output<string>
 
   public constructor(name: string, args: LokiArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:Loki', name, args, opts)
+    super('opsen-k8s-ops:Loki', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'krafteq-k8s:Loki' }],
+    })
 
     const helmOverride = pulumi.output(args.helmOverride)
     const lokiRelease = new k8s.helm.v3.Release(
