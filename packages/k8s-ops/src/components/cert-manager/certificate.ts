@@ -6,7 +6,15 @@ export class Certificate extends pulumi.ComponentResource {
   public readonly secretName: pulumi.Output<string>
 
   public constructor(name: string, args: CertificateArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:Certificate', name, {}, opts)
+    super(
+      'opsen-k8s-ops:Certificate',
+      name,
+      {},
+      {
+        ...opts,
+        aliases: [...(opts?.aliases ?? []), { type: 'opsen-k8s:Certificate' }],
+      },
+    )
 
     const certSecretName = `${name}-tls`
     this.certificate = new k8s.apiextensions.CustomResource(

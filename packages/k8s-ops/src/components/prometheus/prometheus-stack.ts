@@ -34,7 +34,10 @@ export class PrometheusStack extends pulumi.ComponentResource {
   public readonly status: pulumi.Output<k8s.types.output.helm.v3.ReleaseStatus>
 
   constructor(name: string, args: PrometheusArgs, opts?: pulumi.ComponentResourceOptions) {
-    super('opsen-k8s-ops:PrometheusStack', name, args, opts)
+    super('opsen-k8s-ops:PrometheusStack', name, args, {
+      ...opts,
+      aliases: [...(opts?.aliases ?? []), { type: 'proxima-k8s:PrometheusStack' }],
+    })
 
     const helmOverride = pulumi.output(args.helmOverride)
 
