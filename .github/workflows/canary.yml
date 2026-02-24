@@ -8,6 +8,9 @@ concurrency:
   group: canary-${{ github.head_ref }}
   cancel-in-progress: true
 
+env:
+  NODE_OPTIONS: '--max-old-space-size=4096'
+
 jobs:
   canary:
     if: github.event.label.name == 'canary'
