@@ -42,11 +42,12 @@ jobs:
           if ! ls .changeset/*.md 2>/dev/null | grep -qv README.md; then
             cat > .changeset/canary.md << 'CHANGESET'
           ---
-          '@opsen/infra': patch
+          '@opsen/base-ops': patch
           '@opsen/platform': patch
           '@opsen/k8s': patch
           '@opsen/docker': patch
           '@opsen/azure': patch
+          '@opsen/k8s-ops': patch
           ---
 
           Canary release

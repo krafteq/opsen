@@ -13,7 +13,6 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@opsen/infra": "file:../infra",
     "@opsen/platform": "file:../platform",
     "@pulumi/kubernetes": "^4.21.1",
     "@pulumi/pulumi": "^3.152.0",

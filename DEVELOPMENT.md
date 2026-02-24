@@ -2,22 +2,24 @@
 
 ## Current State (Feb 2026)
 
-All five packages are implemented and building. No published npm releases yet.
+All packages are implemented and building. No published npm releases yet.
 
 ### What's done
 
 - Monorepo setup (pnpm workspaces, composite tsconfig, changesets)
-- `@opsen/infra` — facts system, deployer pipeline, config management
-- `@opsen/platform` — workload type system, RuntimeDeployer interface, WorkloadModule
-- `@opsen/k8s` — Kubernetes deployer (Deployments, Services, Ingress, PVCs, ConfigMaps)
-- `@opsen/docker` — Docker deployer with Caddy reverse proxy for ingress
-- `@opsen/azure` — Azure Container Apps deployer
+- `@opsen/platform` — standalone workload type system, RuntimeDeployer interface, utility types
+- `@opsen/base-ops` — facts system, deployer pipeline, config management (renamed from `@opsen/infra`)
+- `@opsen/k8s` — Kubernetes deployer (Deployments, Services, Ingress, PVCs, ConfigMaps) + building blocks
+- `@opsen/docker` — Docker deployer with Caddy reverse proxy for ingress + building blocks
+- `@opsen/azure` — Azure Container Apps deployer + building blocks
+- `@opsen/k8s-ops` — Generic K8s cluster components (cert-manager, ingress-nginx, external-dns, Prometheus, Loki, OAuth2, MinIO, Kafka)
+- Building block functions extracted as public API for each runtime
+- Unit tests for building blocks (parseResourceRequirements, generateCaddyfile, buildContainerAppSpec)
+- E2e testing framework for runtime deployers
 - Examples for Docker and Azure workloads
 
 ### What's next
 
-- [ ] CI pipeline (`.github/workflows/ci.yml`)
-- [ ] Tests (facts-pool queries, Caddyfile generation, probe mapping)
 - [ ] K8s example
 - [ ] API docs (TypeDoc)
 - [ ] npm publish + changesets release workflow
@@ -28,7 +30,6 @@ All five packages are implemented and building. No published npm releases yet.
 1. **K8s `processFullName` bug** — ternary logic is inverted, always returns just `name` instead of `name-processName`
 2. **ACA exec probes** — Azure Container Apps doesn't support exec probes; deployer falls back to tcpSocket
 3. **Docker scale + ports** — when `scale > 1`, only the first instance binds host ports; others accessible via network only
-4. **No tests** — all packages stub `"test": "echo 'no tests yet'"`
 
 ## Architecture Decisions
 
@@ -45,3 +46,7 @@ Each workload process becomes a separate ContainerApp for independent scaling, m
 ### Caddy for Docker ingress
 
 Chosen over nginx/traefik for auto-TLS, simple programmatic config, and minimal footprint on single-host deployments.
+
+### Building blocks pattern
+
+Each runtime deployer exports both the monolithic `RuntimeDeployer` and individual building-block functions. The deployer delegates to the building blocks, so users can compose individual pieces without buying into the full pipeline.
