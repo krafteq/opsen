@@ -7,6 +7,9 @@
     { "path": "packages/docker" },
     { "path": "packages/azure" },
     { "path": "packages/k8s-ops" },
-    { "path": "packages/testing" }
+    { "path": "packages/testing" },
+    { "path": "packages/vault-fact-store" },
+    { "path": "packages/azure-fact-store" },
+    { "path": "packages/agent" }
   ]
 }
