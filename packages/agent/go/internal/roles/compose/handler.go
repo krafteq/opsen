@@ -214,6 +214,8 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status = "unknown"
 		output = []byte("[]")
+	} else if len(strings.TrimSpace(string(output))) == 0 {
+		output = []byte("[]")
 	}
 
 	resources := h.tracker.GetProject(client.Client, projectSlug)

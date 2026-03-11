@@ -88,9 +88,12 @@ func (d *CaddyDriver) ListRoutes(clientName string) ([]string, error) {
 
 	var routes []string
 	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasSuffix(line, " {") && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "@") {
-			routes = append(routes, strings.TrimSuffix(line, " {"))
+		// Only match top-level blocks (not indented) — domain names start at column 0
+		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && line[0] != '#' {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasSuffix(trimmed, " {") {
+				routes = append(routes, strings.TrimSuffix(trimmed, " {"))
+			}
 		}
 	}
 	return routes, nil

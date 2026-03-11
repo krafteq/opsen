@@ -456,13 +456,16 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DropRole(w http.ResponseWriter, r *http.Request) {
 	client := identity.ClientFromContext(r.Context())
 	dbName := r.PathValue("name")
-	roleName := r.PathValue("role")
+	username := r.PathValue("role")
 
 	record := h.tracker.GetDatabase(client.Client, dbName)
 	if record == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
 		return
 	}
+
+	// Apply same prefix as CreateRole
+	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, dbName, username)
 
 	// Find and remove role from additional roles
 	found := false
@@ -482,6 +485,9 @@ func (h *Handler) DropRole(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.pg.RevokeConnect(record.DatabaseName, roleName); err != nil {
 		h.logger.Warn("failed to revoke connect", "role", roleName, "error", err)
+	}
+	if err := h.pg.RevokeAllPrivileges(record.DatabaseName, roleName, record.OwnerRole); err != nil {
+		h.logger.Warn("failed to revoke privileges", "role", roleName, "error", err)
 	}
 	if err := h.pg.DropRole(roleName); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to drop role: %v", err)})

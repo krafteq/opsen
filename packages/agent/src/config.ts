@@ -144,11 +144,18 @@ function toSnakeKeys(obj: Record<string, unknown>): Record<string, unknown> {
   return result
 }
 
+function needsYamlQuoting(s: string): boolean {
+  if (s === '' || s === 'true' || s === 'false' || s === 'null' || s === '~') return true
+  if (/^[\d.+-]/.test(s) && !isNaN(Number(s))) return true
+  return /[:#*{}!&|>',?@`%[\]]/.test(s)
+}
+
 function toYaml(obj: unknown, indent = 0): string {
   const pad = '  '.repeat(indent)
 
   if (obj === null || obj === undefined) return `${pad}~`
-  if (typeof obj === 'string') return obj.includes(':') || obj.includes('#') ? `"${obj}"` : obj
+  if (typeof obj === 'string')
+    return needsYamlQuoting(obj) ? `"${obj.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : obj
   if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj)
 
   if (Array.isArray(obj)) {

@@ -240,6 +240,13 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 			modifications = append(modifications, fmt.Sprintf("%s: set mem_limit %s", name, svc.MemLimit))
 		}
 
+		// Remove deploy.resources.limits to avoid conflicts with top-level limits
+		// (docker compose v5+ rejects having both deploy limits and top-level limits)
+		if svc.Deploy != nil {
+			svc.Deploy = nil
+			modifications = append(modifications, fmt.Sprintf("%s: removed deploy section (using top-level limits)", name))
+		}
+
 		if svc.Privileged != nil && *svc.Privileged {
 			f := false
 			svc.Privileged = &f

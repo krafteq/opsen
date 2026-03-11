@@ -71,10 +71,10 @@ func (p *PgManager) CreateRole(name string, opts RoleOptions) error {
 	}
 
 	query := fmt.Sprintf(
-		"CREATE ROLE %s WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD $1%s",
-		quoteIdent(name), connLimit,
+		"CREATE ROLE %s WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %s%s",
+		quoteIdent(name), quoteLiteral(opts.Password), connLimit,
 	)
-	_, err = p.db.Exec(query, opts.Password)
+	_, err = p.db.Exec(query)
 	if err != nil {
 		return fmt.Errorf("creating role %s: %w", name, err)
 	}
@@ -188,7 +188,7 @@ func (p *PgManager) AlterDatabaseConnectionLimit(name string, limit int) error {
 }
 
 func (p *PgManager) CreateExtension(dbName, extName string) error {
-	if !isValidIdentifier(dbName) || !isValidIdentifier(extName) {
+	if !isValidIdentifier(dbName) || !isValidExtensionName(extName) {
 		return fmt.Errorf("invalid database or extension name")
 	}
 
@@ -266,6 +266,45 @@ func (p *PgManager) GrantReadOnly(dbName, roleName, ownerRole string) error {
 	for _, q := range queries {
 		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("executing grant: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// RevokeAllPrivileges revokes all grants for a role in a specific database,
+// including default privileges, so the role can be dropped cleanly.
+func (p *PgManager) RevokeAllPrivileges(dbName, roleName, ownerRole string) error {
+	password, err := readPasswordFile(p.cfg.AdminPasswordFile)
+	if err != nil {
+		return err
+	}
+
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		p.cfg.Host, p.cfg.Port, p.cfg.AdminUser, password, dbName, p.cfg.SSLMode)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return fmt.Errorf("connecting to %s: %w", dbName, err)
+	}
+	defer db.Close()
+
+	queries := []string{
+		fmt.Sprintf("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %s", quoteIdent(roleName)),
+		fmt.Sprintf("REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %s", quoteIdent(roleName)),
+		fmt.Sprintf("REVOKE USAGE ON SCHEMA public FROM %s", quoteIdent(roleName)),
+	}
+
+	if ownerRole != "" {
+		queries = append(queries,
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s REVOKE ALL ON TABLES FROM %s",
+				quoteIdent(ownerRole), quoteIdent(roleName)),
+		)
+	}
+
+	for _, q := range queries {
+		if _, err := db.Exec(q); err != nil {
+			p.logger.Warn("revoke privilege failed", "query", q, "error", err)
 		}
 	}
 
@@ -358,6 +397,26 @@ func isValidIdentifier(s string) bool {
 			continue
 		}
 		if c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isValidExtensionName checks that an extension name is safe (allows hyphens).
+func isValidExtensionName(s string) bool {
+	if s == "" || len(s) > 63 {
+		return false
+	}
+	for i, c := range s {
+		if c >= 'a' && c <= 'z' {
+			continue
+		}
+		if c >= '0' && c <= '9' && i > 0 {
+			continue
+		}
+		if c == '_' || c == '-' {
 			continue
 		}
 		return false
