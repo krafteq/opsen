@@ -34,16 +34,24 @@ export class AgentInstaller extends pulumi.ComponentResource {
     const binHash = build.stdout.apply((out) => out.trim().split('\n').pop()!.trim())
 
     // ─── Setup remote directories + user ────────────────
+    const setupCommands = pulumi.output(args.config).apply((config) => {
+      const cmds = [
+        'set -e',
+        'id -u opsen-agent &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin opsen-agent',
+        'mkdir -p /etc/opsen-agent/clients /var/lib/opsen-agent/deployments /var/lib/opsen-agent/db /var/log/opsen-agent',
+        'chown -R opsen-agent:opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
+      ]
+      if (config.roles?.ingress?.configDir) {
+        cmds.push(`chown opsen-agent:opsen-agent ${config.roles.ingress.configDir}`)
+      }
+      return cmds.join('\n')
+    })
+
     const setup = new command.remote.Command(
       `${name}-setup`,
       {
         connection: conn,
-        create: [
-          'set -e',
-          'id -u opsen-agent &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin opsen-agent',
-          'mkdir -p /etc/opsen-agent/clients /var/lib/opsen-agent/deployments /var/log/opsen-agent',
-          'chown opsen-agent:opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
-        ].join('\n'),
+        create: setupCommands,
         delete: [
           'systemctl stop opsen-agent 2>/dev/null || true',
           'systemctl disable opsen-agent 2>/dev/null || true',
@@ -183,6 +191,8 @@ function buildSystemdUnit(args: AgentInstallerArgs): pulumi.Output<string> {
     const hasCompose = !!config.roles?.compose
     const hasIngress = !!config.roles?.ingress
     const supplementaryGroups = hasCompose ? 'SupplementaryGroups=docker' : ''
+    // ProtectHome breaks docker compose plugin discovery, so disable when compose role is active
+    const protectHome = hasCompose ? 'ProtectHome=tmpfs' : 'ProtectHome=true'
 
     const writePaths = ['/var/lib/opsen-agent', '/var/log/opsen-agent']
     if (hasIngress && config.roles?.ingress?.configDir) {
@@ -204,11 +214,9 @@ Group=opsen-agent
 ${supplementaryGroups}
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+${protectHome}
 ReadWritePaths=${writePaths.join(' ')}
 PrivateTmp=true
-CapabilityBoundingSet=
-AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target`
