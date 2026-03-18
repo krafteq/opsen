@@ -1,7 +1,7 @@
 {
-  "name": "@opsen/base-ops",
+  "name": "@opsen/vault-fact-store",
   "version": "0.1.0",
-  "description": "Infrastructure facts, deployer, and module system for Pulumi",
+  "description": "HashiCorp Vault KV v2 backend for Opsen FactStore",
   "main": "dist/index.js",
   "files": [
     "dist"
@@ -12,7 +12,7 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@pulumi/pulumi": "^3.152.0"
+    "@opsen/base-ops": "file:../base-ops"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.0",

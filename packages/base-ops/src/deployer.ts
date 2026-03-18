@@ -54,7 +54,7 @@ export abstract class InfrastructureDeployer<
     }
 
     return deployRec(0).apply((finalConfig) => {
-      if (this.args.factSink) {
+      if (this.args.factSink && !pulumi.runtime.isDryRun()) {
         return pulumi.output(this.args.factSink.write(finalConfig).then(() => finalConfig))
       }
       return pulumi.output(finalConfig)

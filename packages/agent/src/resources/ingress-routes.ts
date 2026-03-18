@@ -21,10 +21,23 @@ interface IngressRoutesInputs {
   routes: IngressRoute[]
 }
 
+/** Transform TypeScript route to Go API format (camelCase → snake_case, domain → hosts). */
+function toApiRoute(route: IngressRoute) {
+  return {
+    name: route.name,
+    hosts: [route.domain],
+    upstream: route.upstream,
+    path_prefix: route.path,
+    tls: route.tls,
+    headers: route.headers,
+    rate_limit_rps: route.rateLimit,
+  }
+}
+
 const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
   async create(inputs: IngressRoutesInputs) {
     const resp = await agentRequest(inputs.connection, 'PUT', '/v1/ingress/routes', {
-      routes: inputs.routes,
+      routes: inputs.routes.map(toApiRoute),
     })
     checkResponse(resp, [200])
     return {
@@ -43,14 +56,13 @@ const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
 
   async update(_id, _olds: IngressRoutesInputs, news: IngressRoutesInputs) {
     const resp = await agentRequest(news.connection, 'PUT', '/v1/ingress/routes', {
-      routes: news.routes,
+      routes: news.routes.map(toApiRoute),
     })
     checkResponse(resp, [200])
     return { outs: { ...news, updateResult: resp.body } }
   },
 
   async delete(_id, props: IngressRoutesInputs) {
-    // Delete each route individually
     for (const route of props.routes) {
       const resp = await agentRequest(props.connection, 'DELETE', `/v1/ingress/routes/${route.name}`)
       checkResponse(resp, [200, 404])
