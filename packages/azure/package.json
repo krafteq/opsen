@@ -4,7 +4,8 @@
   "description": "Azure Container Apps runtime deployer for Opsen platform",
   "main": "src/index.ts",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build",

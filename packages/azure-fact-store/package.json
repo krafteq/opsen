@@ -4,7 +4,8 @@
   "description": "Azure Key Vault backend for Opsen FactStore",
   "main": "src/index.ts",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build",

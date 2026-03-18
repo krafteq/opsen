@@ -4,7 +4,8 @@
   "description": "Docker single-host runtime deployer with Caddy ingress",
   "main": "src/index.ts",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build",

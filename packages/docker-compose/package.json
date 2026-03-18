@@ -4,7 +4,8 @@
   "description": "SSH-based Docker Compose deployer with MirrorState file sync",
   "main": "src/index.ts",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build",

@@ -15,7 +15,8 @@
   },
   "files": [
     "dist",
-    "Dockerfile"
+    "Dockerfile",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build && node scripts/build-azure-function.mjs",

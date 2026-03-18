@@ -4,7 +4,8 @@
   "description": "Pulumi dynamic providers for PowerDNS authoritative server and Recursor",
   "main": "src/index.ts",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build",

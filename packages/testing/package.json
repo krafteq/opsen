@@ -5,7 +5,8 @@
   "description": "Shared e2e testing harness for Opsen deployers",
   "main": "src/index.ts",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsc --build",
