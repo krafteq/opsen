@@ -1,0 +1,43 @@
+{
+  "name": "@opsen/cert-renewer",
+  "version": "0.1.0",
+  "description": "ACME certificate renewal for Azure Key Vault + App Gateway",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./renew": "./dist/renew.js",
+    "./function-handler": "./dist/function-handler.js",
+    "./azure-function.zip": "./dist/azure-function.zip"
+  },
+  "bin": {
+    "cert-renewer": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "Dockerfile"
+  ],
+  "scripts": {
+    "build": "tsc --build && node scripts/build-azure-function.mjs",
+    "build:tsc": "tsc --build",
+    "build:function": "node scripts/build-azure-function.mjs",
+    "clean": "tsc --build --clean && rm -rf dist/azure-function dist/azure-function.zip",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "acme-client": "^5.4.0",
+    "node-forge": "^1.3.1"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.0",
+    "@types/node": "^22.0.0",
+    "@types/node-forge": "^1.3.11",
+    "archiver": "^7.0.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT"
+}
