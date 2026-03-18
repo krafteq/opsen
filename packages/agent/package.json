@@ -13,6 +13,8 @@
   ],
   "scripts": {
     "build": "tsc --build",
+    "build:go": "cd go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o out/opsen-agent ./cmd/opsen-agent",
+    "prepack": "npm run build:go",
     "clean": "tsc --build --clean",
     "test": "vitest run",
     "test:watch": "vitest watch"
