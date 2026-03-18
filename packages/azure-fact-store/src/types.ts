@@ -7,8 +7,8 @@ export interface AzureFactStoreOptions {
   /** Azure credential (default: DefaultAzureCredential) */
   credential?: TokenCredential
 
-  /** Secret name prefix (default: 'opsen') */
-  prefix?: string
+  /** Owner identifier used as secret name prefix and for stale cleanup */
+  owner?: string
 
   /** Whether to delete stale facts owned by the current owner (default: true) */
   cleanupStale?: boolean

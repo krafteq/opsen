@@ -1,12 +1,6 @@
 import type { FactStoreReader, FactStoreWriter, InfrastructureConfig, InfrastructureFact } from '@opsen/base-ops'
-import { SIMPLE_SECRET_KIND } from '@opsen/base-ops'
-import type { AzureFactStoreOptions } from './types.js'
-import { encodeSecretName, decodeSecretName, manifestSecretName, validateFactKey } from './secret-naming.js'
-
-interface Manifest {
-  secretNames: string[]
-  lastUpdated: string
-}
+import type { AzureFactStoreOptions } from './types'
+import { encodeSecretName, validateFactKey } from './secret-naming'
 
 /** Minimal interface for the Azure SecretClient methods we use. */
 interface SecretClientLike {
@@ -21,16 +15,17 @@ export class AzureFactStore implements FactStoreReader, FactStoreWriter {
   private client: SecretClientLike | undefined
   private readonly vaultUrl: string
   private readonly credential: AzureFactStoreOptions['credential']
-  private readonly prefix: string
-  private readonly cleanupStale: boolean
   private readonly owner: string | undefined
+  private readonly cleanupStale: boolean
 
-  constructor(options: AzureFactStoreOptions, owner?: string) {
+  constructor(options: AzureFactStoreOptions) {
     this.vaultUrl = options.vaultUrl
     this.credential = options.credential
-    this.prefix = options.prefix ?? 'opsen'
+    this.owner = options.owner
     this.cleanupStale = options.cleanupStale ?? true
-    this.owner = owner
+    if (this.owner) {
+      validateFactKey('Owner', this.owner)
+    }
   }
 
   private async getClient(): Promise<SecretClientLike> {
@@ -49,28 +44,16 @@ export class AzureFactStore implements FactStoreReader, FactStoreWriter {
   async read(): Promise<InfrastructureConfig> {
     const client = await this.getClient()
     const facts: InfrastructureFact[] = []
-    const prefix = `${this.prefix}-`
+    const prefix = this.owner ? `${this.owner}--` : undefined
 
     for await (const properties of client.listPropertiesOfSecrets()) {
-      if (!properties.name.startsWith(prefix)) continue
-      if (properties.name.startsWith(`${this.prefix}-manifest-`)) continue
-
-      const decoded = decodeSecretName(this.prefix, properties.name)
-      if (!decoded) continue
+      if (prefix && !properties.name.startsWith(prefix)) continue
 
       const secret = await client.getSecret(properties.name)
-      if (secret.value) {
-        if (decoded.kind === SIMPLE_SECRET_KIND) {
-          facts.push({
-            kind: SIMPLE_SECRET_KIND,
-            metadata: { name: decoded.name },
-            spec: { value: secret.value },
-            owner: '',
-          })
-        } else {
-          facts.push(JSON.parse(secret.value) as InfrastructureFact)
-        }
-      }
+      if (!secret.value) continue
+
+      const fact = tryParseFact(secret.value)
+      if (fact) facts.push(fact)
     }
 
     return { facts }
@@ -78,16 +61,17 @@ export class AzureFactStore implements FactStoreReader, FactStoreWriter {
 
   async write(config: InfrastructureConfig): Promise<void> {
     const client = await this.getClient()
-    const writtenNames: string[] = []
 
     for (const fact of config.facts) {
       validateFactKey('Kind', fact.kind)
       validateFactKey('Name', fact.metadata.name)
     }
 
+    const writtenNames = new Set<string>()
+
     const writes = config.facts.map(async (fact) => {
-      const secretName = encodeSecretName(this.prefix, fact.kind, fact.metadata.name)
-      const value = fact.kind === SIMPLE_SECRET_KIND ? (fact.spec as { value: string }).value : JSON.stringify(fact)
+      const secretName = encodeSecretName(this.owner, fact.kind, fact.metadata.name)
+      const value = JSON.stringify(fact)
       try {
         await client.setSecret(secretName, value)
       } catch (err: unknown) {
@@ -97,38 +81,18 @@ export class AzureFactStore implements FactStoreReader, FactStoreWriter {
           throw err
         }
       }
-      writtenNames.push(secretName)
+      writtenNames.add(secretName)
     })
     await Promise.all(writes)
 
-    if (this.owner) {
-      const mName = manifestSecretName(this.prefix, this.owner)
-      let oldManifest: Manifest | null = null
-      try {
-        const secret = await client.getSecret(mName)
-        if (secret.value) {
-          oldManifest = JSON.parse(secret.value) as Manifest
-        }
-      } catch {
-        // Manifest doesn't exist yet
+    if (this.owner && this.cleanupStale) {
+      const prefix = `${this.owner}--`
+      for await (const properties of client.listPropertiesOfSecrets()) {
+        if (!properties.name.startsWith(prefix)) continue
+        if (writtenNames.has(properties.name)) continue
+        const poller = await client.beginDeleteSecret(properties.name)
+        await poller.pollUntilDone()
       }
-
-      if (this.cleanupStale && oldManifest?.secretNames) {
-        const writtenSet = new Set(writtenNames)
-        const staleNames = oldManifest.secretNames.filter((n) => !writtenSet.has(n))
-        await Promise.all(
-          staleNames.map(async (name) => {
-            const poller = await client.beginDeleteSecret(name)
-            await poller.pollUntilDone()
-          }),
-        )
-      }
-
-      const manifest: Manifest = {
-        secretNames: writtenNames,
-        lastUpdated: new Date().toISOString(),
-      }
-      await client.setSecret(mName, JSON.stringify(manifest))
     }
   }
 
@@ -137,6 +101,24 @@ export class AzureFactStore implements FactStoreReader, FactStoreWriter {
     const poller = await client.beginRecoverDeletedSecret(name)
     await poller.pollUntilDone()
     await client.setSecret(name, value)
+  }
+}
+
+function tryParseFact(value: string): InfrastructureFact | null {
+  try {
+    const parsed = JSON.parse(value)
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.kind === 'string' &&
+      parsed.metadata?.name &&
+      parsed.spec
+    ) {
+      return parsed as InfrastructureFact
+    }
+    return null
+  } catch {
+    return null
   }
 }
 
