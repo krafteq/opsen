@@ -1,14 +1,11 @@
-import * as fs from 'node:fs'
 import * as pulumi from '@pulumi/pulumi'
 import * as authorization from '@pulumi/azure-native/authorization'
+import * as insights from '@pulumi/azure-native/insights'
 import * as storage from '@pulumi/azure-native/storage'
 import * as web from '@pulumi/azure-native/web'
+import { AzureDeployer, AzureDeployParams } from '../deployer/base'
 
-export interface CertRenewalFunctionArgs {
-  /** Resource group name */
-  resourceGroupName: pulumi.Input<string>
-  /** Azure region */
-  location?: pulumi.Input<string>
+export interface CertRenewalFunctionDeployParams extends AzureDeployParams {
   /** Azure subscription ID */
   subscriptionId: pulumi.Input<string>
   /** Key Vault name to scan for certs */
@@ -31,6 +28,8 @@ export interface CertRenewalFunctionArgs {
     name: pulumi.Input<string>
     connectionString: pulumi.Input<string>
   }
+  /** Log Analytics Workspace ID. If provided, creates Application Insights and wires it to the function. */
+  logAnalyticsWorkspaceId?: pulumi.Input<string>
 }
 
 export interface CertRenewalFunctionRef {
@@ -60,7 +59,7 @@ function resolveDefaultFunctionZip(): string {
 }
 
 /**
- * Deploy an Azure Function App (Consumption plan, Node.js 22) that periodically
+ * Deploys an Azure Function App (Consumption plan, Node.js 22) that periodically
  * renews ACME certificates discovered in Key Vault.
  *
  * The function code is deployed from the pre-built zip in @opsen/cert-renewer.
@@ -70,138 +69,188 @@ function resolveDefaultFunctionZip(): string {
  *   - Key Vault Secrets Officer on the vault
  *   - DNS Zone Contributor on each DNS zone
  */
-export function createCertRenewalFunction(name: string, args: CertRenewalFunctionArgs): CertRenewalFunctionRef {
-  const zipPath = args.functionZipPath ?? resolveDefaultFunctionZip()
+export class CertRenewalFunctionDeployer extends AzureDeployer<CertRenewalFunctionDeployParams> {
+  deploy(): CertRenewalFunctionRef {
+    const zipPath = this.params.functionZipPath ?? resolveDefaultFunctionZip()
 
-  // Read zip file as base64 for blob upload
-  const zipContent = fs.readFileSync(zipPath)
-  const zipBase64 = zipContent.toString('base64')
+    // Storage account for Function App runtime + zip hosting
+    let storageAccountName: pulumi.Input<string>
+    let storageConnectionString: pulumi.Input<string>
 
-  // Storage account for Function App runtime + zip hosting
-  let storageAccountName: pulumi.Input<string>
-  let storageConnectionString: pulumi.Input<string>
-
-  if (args.storageAccount) {
-    storageAccountName = args.storageAccount.name
-    storageConnectionString = args.storageAccount.connectionString
-  } else {
-    const saName = name.replace(/[^a-z0-9]/g, '').substring(0, 24)
-    const sa = new storage.StorageAccount(`${name}-sa`, {
-      accountName: saName,
-      resourceGroupName: args.resourceGroupName,
-      location: args.location,
-      kind: storage.Kind.StorageV2,
-      sku: { name: storage.SkuName.Standard_LRS },
-    })
-
-    storageAccountName = sa.name
-
-    storageConnectionString = pulumi
-      .all([sa.name, args.resourceGroupName])
-      .apply(([accountName, rg]) => storage.listStorageAccountKeys({ accountName, resourceGroupName: rg }))
-      .apply(
-        (keys) =>
-          `DefaultEndpointsProtocol=https;AccountName=${saName};AccountKey=${keys.keys[0].value};EndpointSuffix=core.windows.net`,
+    if (this.params.storageAccount) {
+      storageAccountName = this.params.storageAccount.name
+      storageConnectionString = this.params.storageAccount.connectionString
+    } else {
+      const saName = this.name.replace(/[^a-z0-9]/g, '').substring(0, 24)
+      const sa = new storage.StorageAccount(
+        `${this.name}-sa`,
+        {
+          accountName: saName,
+          resourceGroupName: this.resourceGroupName,
+          location: this.location,
+          kind: storage.Kind.StorageV2,
+          sku: { name: storage.SkuName.Standard_LRS },
+        },
+        this.options(),
       )
-  }
 
-  // Blob container + zip upload
-  const container = new storage.BlobContainer(`${name}-releases`, {
-    accountName: storageAccountName,
-    resourceGroupName: args.resourceGroupName,
-    containerName: 'function-releases',
-    publicAccess: storage.PublicAccess.None,
-  })
+      storageAccountName = sa.name
 
-  const blob = new storage.Blob(`${name}-zip`, {
-    accountName: storageAccountName,
-    resourceGroupName: args.resourceGroupName,
-    containerName: container.name,
-    blobName: `cert-renewer-${Date.now()}.zip`,
-    source: new pulumi.asset.StringAsset(zipBase64),
-    contentType: 'application/zip',
-  })
+      storageConnectionString = pulumi
+        .all([sa.name, this.resourceGroupName])
+        .apply(([accountName, rg]) => storage.listStorageAccountKeys({ accountName, resourceGroupName: rg }))
+        .apply(
+          (keys) =>
+            `DefaultEndpointsProtocol=https;AccountName=${saName};AccountKey=${keys.keys[0].value};EndpointSuffix=core.windows.net`,
+        )
+    }
 
-  // Generate SAS URL for WEBSITE_RUN_FROM_PACKAGE
-  const sasUrl = pulumi
-    .all([storageAccountName, container.name, blob.name, args.resourceGroupName])
-    .apply(([account, containerName, blobName, rg]) =>
-      storage.listStorageAccountServiceSAS({
-        accountName: account,
-        resourceGroupName: rg,
-        protocols: storage.HttpProtocol.Https,
-        sharedAccessStartTime: new Date().toISOString(),
-        sharedAccessExpiryTime: new Date(Date.now() + 365 * 86400000).toISOString(),
-        resource: storage.SignedResource.B,
-        permissions: storage.Permissions.R,
-        canonicalizedResource: `/blob/${account}/${containerName}/${blobName}`,
-      }),
-    )
-    .apply(
-      (sas) =>
-        pulumi.interpolate`https://${storageAccountName}.blob.core.windows.net/${container.name}/${blob.name}?${sas.serviceSasToken}`,
+    // Blob container + zip upload
+    const container = new storage.BlobContainer(
+      `${this.name}-releases`,
+      {
+        accountName: storageAccountName,
+        resourceGroupName: this.resourceGroupName,
+        containerName: 'function-releases',
+        publicAccess: storage.PublicAccess.None,
+      },
+      this.options(),
     )
 
-  // Consumption plan
-  const plan = new web.AppServicePlan(`${name}-plan`, {
-    resourceGroupName: args.resourceGroupName,
-    location: args.location,
-    kind: 'functionapp',
-    reserved: true,
-    sku: { name: 'Y1', tier: 'Dynamic' },
-  })
+    const blob = new storage.Blob(
+      `${this.name}-zip`,
+      {
+        accountName: storageAccountName,
+        resourceGroupName: this.resourceGroupName,
+        containerName: container.name,
+        blobName: `cert-renewer-${Date.now()}.zip`,
+        source: new pulumi.asset.FileAsset(zipPath),
+        contentType: 'application/zip',
+      },
+      this.options(),
+    )
 
-  const functionApp = new web.WebApp(name, {
-    name,
-    resourceGroupName: args.resourceGroupName,
-    location: args.location,
-    serverFarmId: plan.id,
-    kind: 'functionapp,linux',
-    identity: { type: web.ManagedServiceIdentityType.SystemAssigned },
-    siteConfig: {
-      linuxFxVersion: 'NODE|22',
-      appSettings: [
-        { name: 'AzureWebJobsStorage', value: storageConnectionString },
-        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
-        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
-        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: sasUrl },
-        { name: 'AZURE_KEYVAULT_NAME', value: args.keyVaultName },
-        { name: 'AZURE_SUBSCRIPTION_ID', value: args.subscriptionId },
-        { name: 'RENEW_BEFORE_DAYS', value: String(args.renewBeforeDays ?? 30) },
-      ],
-    },
-  })
-
-  const principalId = functionApp.identity.apply((id) => id?.principalId ?? '')
-
-  // RBAC: Key Vault Secrets Officer
-  new authorization.RoleAssignment(`${name}-kv-role`, {
-    scope: args.keyVaultId,
-    principalId,
-    principalType: 'ServicePrincipal',
-    roleDefinitionId: pulumi
-      .output(args.subscriptionId)
+    // Generate SAS URL for WEBSITE_RUN_FROM_PACKAGE
+    const sasUrl = pulumi
+      .all([storageAccountName, container.name, blob.name, this.resourceGroupName])
+      .apply(([account, containerName, blobName, rg]) =>
+        storage.listStorageAccountServiceSAS({
+          accountName: account,
+          resourceGroupName: rg,
+          protocols: storage.HttpProtocol.Https,
+          sharedAccessStartTime: new Date().toISOString(),
+          sharedAccessExpiryTime: new Date(Date.now() + 365 * 86400000).toISOString(),
+          resource: storage.SignedResource.B,
+          permissions: storage.Permissions.R,
+          canonicalizedResource: `/blob/${account}/${containerName}/${blobName}`,
+        }),
+      )
       .apply(
-        (sub) => `/subscriptions/${sub}/providers/Microsoft.Authorization/roleDefinitions/${KV_SECRETS_OFFICER_ROLE}`,
-      ),
-  })
+        (sas) =>
+          pulumi.interpolate`https://${storageAccountName}.blob.core.windows.net/${container.name}/${blob.name}?${sas.serviceSasToken}`,
+      )
 
-  // RBAC: DNS Zone Contributor on each zone
-  pulumi.output(args.dnsZoneIds ?? []).apply((ids) => {
-    for (const [i, zoneId] of (ids as string[]).entries()) {
-      new authorization.RoleAssignment(`${name}-dns-role-${i}`, {
-        scope: zoneId,
+    // Application Insights (optional — requires Log Analytics workspace)
+    let appInsightsSettings: { name: string; value: pulumi.Input<string> }[] = []
+    if (this.params.logAnalyticsWorkspaceId) {
+      const appInsights = new insights.Component(
+        `${this.name}-ai`,
+        {
+          resourceGroupName: this.resourceGroupName,
+          location: this.location,
+          kind: 'web',
+          applicationType: insights.ApplicationType.Web,
+          ingestionMode: insights.IngestionMode.LogAnalytics,
+          workspaceResourceId: this.params.logAnalyticsWorkspaceId,
+          retentionInDays: 30,
+        },
+        this.options(),
+      )
+      appInsightsSettings = [
+        { name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsights.instrumentationKey },
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.connectionString },
+      ]
+    }
+
+    // Consumption plan
+    const plan = new web.AppServicePlan(
+      `${this.name}-plan`,
+      {
+        resourceGroupName: this.resourceGroupName,
+        location: this.location,
+        kind: 'functionapp',
+        reserved: true,
+        sku: { name: 'Y1', tier: 'Dynamic' },
+      },
+      this.options(),
+    )
+
+    const functionApp = new web.WebApp(
+      this.name,
+      {
+        name: this.name,
+        resourceGroupName: this.resourceGroupName,
+        location: this.location,
+        serverFarmId: plan.id,
+        kind: 'functionapp,linux',
+        identity: { type: web.ManagedServiceIdentityType.SystemAssigned },
+        siteConfig: {
+          linuxFxVersion: 'NODE|22',
+          appSettings: [
+            { name: 'AzureWebJobsStorage', value: storageConnectionString },
+            { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
+            { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
+            { name: 'WEBSITE_RUN_FROM_PACKAGE', value: sasUrl },
+            { name: 'AZURE_KEYVAULT_NAME', value: this.params.keyVaultName },
+            { name: 'AZURE_SUBSCRIPTION_ID', value: this.params.subscriptionId },
+            { name: 'RENEW_BEFORE_DAYS', value: String(this.params.renewBeforeDays ?? 30) },
+            ...appInsightsSettings,
+          ],
+        },
+      },
+      this.options(),
+    )
+
+    const principalId = functionApp.identity.apply((id) => id?.principalId ?? '')
+
+    // RBAC: Key Vault Secrets Officer
+    new authorization.RoleAssignment(
+      `${this.name}-kv-role`,
+      {
+        scope: this.params.keyVaultId,
         principalId,
         principalType: 'ServicePrincipal',
         roleDefinitionId: pulumi
-          .output(args.subscriptionId)
+          .output(this.params.subscriptionId)
           .apply(
             (sub) =>
-              `/subscriptions/${sub}/providers/Microsoft.Authorization/roleDefinitions/${DNS_ZONE_CONTRIBUTOR_ROLE}`,
+              `/subscriptions/${sub}/providers/Microsoft.Authorization/roleDefinitions/${KV_SECRETS_OFFICER_ROLE}`,
           ),
-      })
-    }
-  })
+      },
+      this.options(),
+    )
 
-  return { functionApp, identityPrincipalId: principalId }
+    // RBAC: DNS Zone Contributor on each zone
+    pulumi.output(this.params.dnsZoneIds ?? []).apply((ids) => {
+      for (const [i, zoneId] of (ids as string[]).entries()) {
+        new authorization.RoleAssignment(
+          `${this.name}-dns-role-${i}`,
+          {
+            scope: zoneId,
+            principalId,
+            principalType: 'ServicePrincipal',
+            roleDefinitionId: pulumi
+              .output(this.params.subscriptionId)
+              .apply(
+                (sub) =>
+                  `/subscriptions/${sub}/providers/Microsoft.Authorization/roleDefinitions/${DNS_ZONE_CONTRIBUTOR_ROLE}`,
+              ),
+          },
+          this.options(),
+        )
+      }
+    })
+
+    return { functionApp, identityPrincipalId: principalId }
+  }
 }
