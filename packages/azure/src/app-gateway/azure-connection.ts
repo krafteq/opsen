@@ -13,14 +13,14 @@ interface TokenCacheEntry {
   expiresAt: number
 }
 
-const tokenCache = new Map<string, TokenCacheEntry>()
+const tokenCache: Record<string, TokenCacheEntry> = {}
 
 /**
  * Acquire an OAuth2 token for the given scope, caching by tenant+client+scope.
  */
 export async function getAzureToken(conn: AzureConnection, scope: string): Promise<string> {
   const cacheKey = `${conn.tenantId}:${conn.clientId}:${scope}`
-  const cached = tokenCache.get(cacheKey)
+  const cached = tokenCache[cacheKey]
   if (cached && cached.expiresAt > Date.now() + 60_000) {
     return cached.token
   }
@@ -45,10 +45,10 @@ export async function getAzureToken(conn: AzureConnection, scope: string): Promi
   }
 
   const data = (await resp.json()) as { access_token: string; expires_in: number }
-  tokenCache.set(cacheKey, {
+  tokenCache[cacheKey] = {
     token: data.access_token,
     expiresAt: Date.now() + data.expires_in * 1000,
-  })
+  }
 
   return data.access_token
 }

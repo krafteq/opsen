@@ -17,6 +17,8 @@ export interface WebAppDeployParams extends AzureDeployParams {
     password?: pulumi.Input<string>
     identityId?: string
   }
+  /** Application Insights connection string. If provided, wires APPLICATIONINSIGHTS_CONNECTION_STRING into each web app. */
+  appInsightsConnectionString?: pulumi.Input<string>
 }
 
 export interface WebAppSpec {
@@ -67,6 +69,22 @@ export class WebAppDeployer extends AzureDeployer<WebAppDeployParams> {
     // Port
     if (spec.port) {
       appSettings.push({ name: 'WEBSITES_PORT', value: String(spec.port) })
+    }
+
+    // Application Insights
+    if (this.params.appInsightsConnectionString) {
+      appSettings.push({
+        name: 'APPLICATIONINSIGHTS_CONNECTION_STRING',
+        value: this.params.appInsightsConnectionString,
+      })
+      // Extract instrumentation key from connection string and enable auto-instrumentation agent
+      appSettings.push({
+        name: 'APPINSIGHTS_INSTRUMENTATIONKEY',
+        value: pulumi
+          .output(this.params.appInsightsConnectionString)
+          .apply((cs) => cs.match(/InstrumentationKey=([^;]+)/)?.[1] ?? ''),
+      })
+      appSettings.push({ name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: '~3' })
     }
 
     // User app settings

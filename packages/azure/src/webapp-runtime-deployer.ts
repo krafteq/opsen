@@ -37,8 +37,12 @@ export interface AzureWebAppDeployerArgs {
     password?: pulumi.Input<string>
     identityId?: string
   }
+  /** Application Insights connection string. If provided, wires telemetry into each web app. */
+  appInsightsConnectionString?: pulumi.Input<string>
   /** App Gateway reference for WAF-enabled endpoints */
   appGateway?: AppGatewayRef
+  /** Base priority for App Gateway routing rules (default 100). Must be unique across all deployers sharing the same gateway. */
+  appGatewayBasePriority?: number
   /** ACME configuration for automatic TLS certificates */
   acme?: AppGatewayAcmeConfig
   /** Azure connection for dynamic providers (required when appGateway is set) */
@@ -67,6 +71,7 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
       keyVault: args.keyVault,
       storageAccount: args.storageAccount,
       registry: args.registry,
+      appInsightsConnectionString: args.appInsightsConnectionString,
     })
     this.storageAccount = args.storageAccount
     this.kvVaultUrl = args.keyVault.vaultUrl
@@ -91,8 +96,11 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
         if (this.args.appGateway && this.args.acme && this.args.connection) {
           const gwEntries = buildAppGatewayEntries(wl, metadata, processName, process, {
             backendFqdn: '__placeholder__',
+            basePriority: this.args.appGatewayBasePriority,
           })
           for (const entry of gwEntries) {
+            // Web App backends always use HTTPS/443 (App GW → *.azurewebsites.net)
+            entry.backendPort = 443
             this.wireAppGatewayEndpoint(entry.namePrefix, entry, deployed.defaultHostname)
           }
         }
@@ -141,6 +149,9 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
     const acme = this.args.acme!
     const conn = this.args.connection!
 
+    // App Gateway sub-resources must be created sequentially — Azure rejects
+    // concurrent PUT operations on the same gateway (429 + ordering issues).
+
     // 1. ACME certificate → Key Vault
     const cert = new AcmeCertificate(`${namePrefix}-cert`, {
       connection: conn,
@@ -153,72 +164,98 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
     })
 
     // 2. SSL certificate on App Gateway
-    new AppGatewaySslCertificate(`${namePrefix}-ssl`, {
-      connection: conn,
-      gatewayName: gw.gatewayName,
-      name: namePrefix,
-      keyVaultSecretId: cert.keyVaultSecretId,
-    })
-
-    // 3. Backend pool
-    new AppGatewayBackendPool(`${namePrefix}-pool`, {
-      connection: conn,
-      gatewayName: gw.gatewayName,
-      name: namePrefix,
-      fqdns: [backendHostname],
-    })
-
-    // 4. Health probe (optional)
-    if (entry.probe) {
-      new AppGatewayProbe(`${namePrefix}-probe`, {
+    const ssl = new AppGatewaySslCertificate(
+      `${namePrefix}-ssl`,
+      {
         connection: conn,
         gatewayName: gw.gatewayName,
         name: namePrefix,
-        protocol: entry.probe.protocol,
-        path: entry.probe.path,
-        interval: entry.probe.interval,
-        timeout: entry.probe.timeout,
-        unhealthyThreshold: entry.probe.unhealthyThreshold,
-      })
+        keyVaultSecretId: cert.keyVaultSecretId,
+      },
+      { dependsOn: [cert] },
+    )
+
+    // 3. Backend pool
+    const pool = new AppGatewayBackendPool(
+      `${namePrefix}-pool`,
+      {
+        connection: conn,
+        gatewayName: gw.gatewayName,
+        name: namePrefix,
+        fqdns: [backendHostname],
+      },
+      { dependsOn: [ssl] },
+    )
+
+    // 4. Health probe (optional)
+    let lastDep: pulumi.Resource = pool
+    if (entry.probe) {
+      const probe = new AppGatewayProbe(
+        `${namePrefix}-probe`,
+        {
+          connection: conn,
+          gatewayName: gw.gatewayName,
+          name: namePrefix,
+          protocol: entry.probe.protocol,
+          path: entry.probe.path,
+          interval: entry.probe.interval,
+          timeout: entry.probe.timeout,
+          unhealthyThreshold: entry.probe.unhealthyThreshold,
+        },
+        { dependsOn: [pool] },
+      )
+      lastDep = probe
     }
 
     // 5. Backend HTTP settings
     const probeId = entry.probe ? pulumi.interpolate`${gw.resourceIdPrefix}/probes/${namePrefix}` : undefined
 
-    new AppGatewayBackendSettings(`${namePrefix}-settings`, {
-      connection: conn,
-      gatewayName: gw.gatewayName,
-      name: namePrefix,
-      port: entry.backendPort,
-      protocol: 'Https',
-      pickHostNameFromBackendAddress: true,
-      probeId,
-    })
+    const settings = new AppGatewayBackendSettings(
+      `${namePrefix}-settings`,
+      {
+        connection: conn,
+        gatewayName: gw.gatewayName,
+        name: namePrefix,
+        port: entry.backendPort,
+        protocol: 'Https',
+        pickHostNameFromBackendAddress: true,
+        probeId,
+      },
+      { dependsOn: [lastDep] },
+    )
 
     // 6. HTTPS listener
-    new AppGatewayHttpListener(`${namePrefix}-listener`, {
-      connection: conn,
-      gatewayName: gw.gatewayName,
-      name: namePrefix,
-      hostName: entry.hostName,
-      protocol: 'Https',
-      frontendIpConfigurationId: gw.frontendIpConfigId,
-      frontendPortId: gw.frontendPort443Id,
-      sslCertificateId: pulumi.interpolate`${gw.resourceIdPrefix}/sslCertificates/${namePrefix}`,
-    })
+    const listener = new AppGatewayHttpListener(
+      `${namePrefix}-listener`,
+      {
+        connection: conn,
+        gatewayName: gw.gatewayName,
+        name: namePrefix,
+        hostName: entry.hostName,
+        protocol: 'Https',
+        frontendIpConfigurationId: gw.frontendIpConfigId,
+        frontendPortId: gw.frontendPort443Id,
+        sslCertificateId: pulumi.interpolate`${gw.resourceIdPrefix}/sslCertificates/${namePrefix}`,
+      },
+      { dependsOn: [settings] },
+    )
 
     // 7. Routing rule
-    new AppGatewayRoutingRule(`${namePrefix}-rule`, {
-      connection: conn,
-      gatewayName: gw.gatewayName,
-      name: namePrefix,
-      priority: entry.priority,
-      httpListenerId: pulumi.interpolate`${gw.resourceIdPrefix}/httpListeners/${namePrefix}`,
-      backendAddressPoolId: pulumi.interpolate`${gw.resourceIdPrefix}/backendAddressPools/${namePrefix}`,
-      backendHttpSettingsId: pulumi.interpolate`${gw.resourceIdPrefix}/backendHttpSettingsCollection/${namePrefix}`,
-    })
+    new AppGatewayRoutingRule(
+      `${namePrefix}-rule`,
+      {
+        connection: conn,
+        gatewayName: gw.gatewayName,
+        name: namePrefix,
+        priority: entry.priority,
+        httpListenerId: pulumi.interpolate`${gw.resourceIdPrefix}/httpListeners/${namePrefix}`,
+        backendAddressPoolId: pulumi.interpolate`${gw.resourceIdPrefix}/backendAddressPools/${namePrefix}`,
+        backendHttpSettingsId: pulumi.interpolate`${gw.resourceIdPrefix}/backendHttpSettingsCollection/${namePrefix}`,
+      },
+      { dependsOn: [listener] },
+    )
 
-    // 8. DNS A record → App Gateway public IP
+    // 8. DNS A record → App Gateway public IP (independent of gateway sub-resources)
     new network.RecordSet(`${namePrefix}-dns`, {
       resourceGroupName: acme.dnsZoneResourceGroup,
       zoneName: acme.dnsZoneName,

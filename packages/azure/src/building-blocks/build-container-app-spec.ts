@@ -81,9 +81,13 @@ export function buildContainerAppSpec(
       external = true
       if (endpoint.ingress.enableCors) enableCors = true
 
-      const hosts = (endpoint.ingress.hosts as string[]) ?? []
-      for (const host of hosts) {
-        customDomains.push({ name: host })
+      // Skip custom domain binding for WAF endpoints — traffic routes through
+      // App Gateway using the Container App's default *.azurecontainerapps.io FQDN as backend.
+      if (!endpoint.ingress._az?.waf) {
+        const hosts = (endpoint.ingress.hosts as string[]) ?? []
+        for (const host of hosts) {
+          customDomains.push({ name: host })
+        }
       }
     }
   }
