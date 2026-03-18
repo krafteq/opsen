@@ -7,15 +7,15 @@ const VAULT_URL = 'https://AZURE_KEYVAULT_NAME_PLACEHOLDER.vault.azure.net/'
 const RUN_ID = Date.now()
 let testCounter = 0
 
-function uniquePrefix() {
+function uniqueOwner() {
   return `e2e-${RUN_ID}-${testCounter++}`
 }
 
-function makeFact(kind: string, name: string, owner = 'e2e/test'): InfrastructureFact {
+function makeFact(kind: string, name: string, owner = 'e2e-test'): InfrastructureFact {
   return { kind, metadata: { name }, spec: { value: `${kind}-${name}` }, owner }
 }
 
-/** Purge all secrets matching any prefix from this run */
+/** Purge all secrets matching any owner prefix from this run */
 async function cleanupRun() {
   const { SecretClient } = await import('@azure/keyvault-secrets')
   const { DefaultAzureCredential } = await import('@azure/identity')
@@ -48,8 +48,8 @@ afterAll(cleanupRun, 120_000)
 
 describe('AzureFactStore e2e', () => {
   it('write and read back facts', async () => {
-    const prefix = uniquePrefix()
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix })
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
     const facts = [makeFact('cluster', 'prod'), makeFact('database', 'main')]
 
     await store.write({ facts })
@@ -61,13 +61,13 @@ describe('AzureFactStore e2e', () => {
     expect(kinds).toEqual(['cluster', 'database'])
 
     const clusterFact = config.facts.find((f) => f.kind === 'cluster')
-    expect(clusterFact).toEqual(makeFact('cluster', 'prod', 'e2e/test'))
+    expect(clusterFact).toEqual(makeFact('cluster', 'prod', 'e2e-test'))
   })
 
-  it('write and read simple secrets (raw values)', async () => {
-    const prefix = uniquePrefix()
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix })
-    const secret = simpleSecret('db-password', 's3cret-val', 'e2e/test')
+  it('write and read simple secrets as JSON', async () => {
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
+    const secret = simpleSecret('db-password', 's3cret-val', 'e2e-test')
     const regular = makeFact('cluster', 'staging')
 
     await store.write({ facts: [secret, regular] })
@@ -82,8 +82,8 @@ describe('AzureFactStore e2e', () => {
   })
 
   it('overwrite existing facts', async () => {
-    const prefix = uniquePrefix()
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix })
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
 
     await store.write({ facts: [makeFact('cluster', 'prod')] })
     const v1 = await store.read()
@@ -94,7 +94,7 @@ describe('AzureFactStore e2e', () => {
       kind: 'cluster',
       metadata: { name: 'prod' },
       spec: { value: 'updated-value' },
-      owner: 'e2e/test',
+      owner: 'e2e-test',
     }
     await store.write({ facts: [updatedFact] })
 
@@ -103,10 +103,9 @@ describe('AzureFactStore e2e', () => {
     expect(v2.facts[0].spec).toEqual({ value: 'updated-value' })
   })
 
-  it('manifest tracks secrets and cleans up stale ones', async () => {
-    const prefix = uniquePrefix()
-    const owner = 'e2e/cleanup-test'
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix }, owner)
+  it('cleans up stale secrets using owner prefix', async () => {
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
 
     // Write two facts
     await store.write({ facts: [makeFact('cluster', 'prod'), makeFact('cluster', 'staging')] })
@@ -125,16 +124,15 @@ describe('AzureFactStore e2e', () => {
   })
 
   it('read returns empty when no facts exist', async () => {
-    const prefix = uniquePrefix()
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix })
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
     const config = await store.read()
     expect(config.facts).toHaveLength(0)
   })
 
   it('recover soft-deleted secret on conflict (write after delete)', async () => {
-    const prefix = uniquePrefix()
-    const owner = 'e2e/conflict-test'
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix }, owner)
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
 
     // Write a fact
     await store.write({ facts: [makeFact('cluster', 'ephemeral')] })
@@ -154,8 +152,8 @@ describe('AzureFactStore e2e', () => {
   })
 
   it('validation rejects invalid characters', async () => {
-    const prefix = uniquePrefix()
-    const store = new AzureFactStore({ vaultUrl: VAULT_URL, prefix })
+    const owner = uniqueOwner()
+    const store = new AzureFactStore({ vaultUrl: VAULT_URL, owner })
     await expect(store.write({ facts: [makeFact('bad/kind', 'name')] })).rejects.toThrow('Kind "bad/kind"')
     await expect(store.write({ facts: [makeFact('kind', 'bad#name')] })).rejects.toThrow('Name "bad#name"')
   })

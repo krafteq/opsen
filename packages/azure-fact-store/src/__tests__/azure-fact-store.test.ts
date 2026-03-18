@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { InfrastructureFact } from '@opsen/base-ops'
 import { SIMPLE_SECRET_KIND, simpleSecret } from '@opsen/base-ops'
 import { AzureFactStore } from '../azure-fact-store.js'
-import { encodeSecretName, manifestSecretName } from '../secret-naming.js'
+import { encodeSecretName } from '../secret-naming.js'
 
-function makeFact(kind: string, name: string, owner = 'test/stack'): InfrastructureFact {
+function makeFact(kind: string, name: string, owner = 'test-stack'): InfrastructureFact {
   return { kind, metadata: { name }, spec: { value: `${kind}-${name}` }, owner }
 }
 
@@ -40,25 +40,22 @@ describe('AzureFactStore', () => {
   })
 
   function createStore(owner?: string) {
-    const store = new AzureFactStore(
-      {
-        vaultUrl: 'https://test.vault.azure.net/',
-        credential: { getToken: vi.fn() } as any,
-        prefix: 'opsen',
-      },
+    const store = new AzureFactStore({
+      vaultUrl: 'https://test.vault.azure.net/',
+      credential: { getToken: vi.fn() } as any,
       owner,
-    )
+    })
     // Inject mock client directly
     ;(store as any).client = mockSecretClient
     return store
   }
 
   describe('read', () => {
-    it('reads facts by listing and filtering secrets', async () => {
+    it('reads facts by listing and parsing JSON values', async () => {
       const clusterFact = makeFact('cluster', 'prod')
       const dbFact = makeFact('database', 'main')
-      const clusterSecretName = encodeSecretName('opsen', 'cluster', 'prod')
-      const dbSecretName = encodeSecretName('opsen', 'database', 'main')
+      const clusterSecretName = encodeSecretName('myapp', 'cluster', 'prod')
+      const dbSecretName = encodeSecretName('myapp', 'database', 'main')
 
       mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
         (async function* () {
@@ -72,44 +69,86 @@ describe('AzureFactStore', () => {
         return makeSecret(name, '')
       })
 
-      const store = createStore()
+      const store = createStore('myapp')
       const config = await store.read()
 
       expect(config.facts).toHaveLength(2)
       expect(config.facts.map((f) => f.kind).sort()).toEqual(['cluster', 'database'])
     })
 
-    it('skips manifest secrets', async () => {
+    it('skips non-fact secrets (invalid JSON)', async () => {
       const clusterFact = makeFact('cluster', 'prod')
-      const clusterSecretName = encodeSecretName('opsen', 'cluster', 'prod')
-      const mName = manifestSecretName('opsen', 'some-owner')
+      const clusterSecretName = encodeSecretName('myapp', 'cluster', 'prod')
 
       mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
         (async function* () {
           yield makeSecretProperties(clusterSecretName)
-          yield makeSecretProperties(mName)
+          yield makeSecretProperties('myapp--some--raw-value')
         })(),
       )
-      mockSecretClient.getSecret.mockResolvedValue(makeSecret(clusterSecretName, JSON.stringify(clusterFact)))
+      mockSecretClient.getSecret.mockImplementation(async (name: string) => {
+        if (name === clusterSecretName) return makeSecret(name, JSON.stringify(clusterFact))
+        return makeSecret(name, 'not-json')
+      })
+
+      const store = createStore('myapp')
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(config.facts[0].kind).toBe('cluster')
+    })
+
+    it('skips secrets without required fact fields', async () => {
+      mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
+        (async function* () {
+          yield makeSecretProperties('myapp--something--else')
+        })(),
+      )
+      mockSecretClient.getSecret.mockResolvedValue(makeSecret('myapp--something--else', JSON.stringify({ foo: 'bar' })))
+
+      const store = createStore('myapp')
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(0)
+    })
+
+    it('filters by owner prefix', async () => {
+      mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
+        (async function* () {
+          yield makeSecretProperties('other--cluster--prod')
+          yield makeSecretProperties('myapp--cluster--prod')
+        })(),
+      )
+      mockSecretClient.getSecret.mockResolvedValue(
+        makeSecret('myapp--cluster--prod', JSON.stringify(makeFact('cluster', 'prod'))),
+      )
+
+      const store = createStore('myapp')
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(mockSecretClient.getSecret).toHaveBeenCalledTimes(1)
+    })
+
+    it('reads all secrets when no owner is set', async () => {
+      const clusterFact = makeFact('cluster', 'prod')
+
+      mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
+        (async function* () {
+          yield makeSecretProperties('cluster--prod')
+          yield makeSecretProperties('unrelated-secret')
+        })(),
+      )
+      mockSecretClient.getSecret.mockImplementation(async (name: string) => {
+        if (name === 'cluster--prod') return makeSecret(name, JSON.stringify(clusterFact))
+        return makeSecret(name, 'plain-text')
+      })
 
       const store = createStore()
       const config = await store.read()
 
       expect(config.facts).toHaveLength(1)
-    })
-
-    it('skips secrets with wrong prefix', async () => {
-      mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
-        (async function* () {
-          yield makeSecretProperties('other-secret')
-        })(),
-      )
-
-      const store = createStore()
-      const config = await store.read()
-
-      expect(config.facts).toHaveLength(0)
-      expect(mockSecretClient.getSecret).not.toHaveBeenCalled()
+      expect(mockSecretClient.getSecret).toHaveBeenCalledTimes(2)
     })
 
     it('returns empty facts when no secrets exist', async () => {
@@ -123,7 +162,7 @@ describe('AzureFactStore', () => {
   })
 
   describe('write', () => {
-    it('writes all facts as secrets', async () => {
+    it('writes all facts as JSON', async () => {
       mockSecretClient.setSecret.mockResolvedValue({})
 
       const store = createStore()
@@ -132,69 +171,71 @@ describe('AzureFactStore', () => {
 
       expect(mockSecretClient.setSecret).toHaveBeenCalledTimes(2)
       for (const fact of facts) {
-        const secretName = encodeSecretName('opsen', fact.kind, fact.metadata.name)
+        const secretName = encodeSecretName(undefined, fact.kind, fact.metadata.name)
         expect(mockSecretClient.setSecret).toHaveBeenCalledWith(secretName, JSON.stringify(fact))
       }
     })
 
-    it('writes manifest and cleans up stale secrets when owner is set', async () => {
-      const staleName = encodeSecretName('opsen', 'cluster', 'old-staging')
-      const keepName = encodeSecretName('opsen', 'cluster', 'prod')
-      const mName = manifestSecretName('opsen', 'my/owner')
+    it('writes simple secrets as JSON like any other fact', async () => {
+      mockSecretClient.setSecret.mockResolvedValue({})
+
+      const store = createStore()
+      const secret = simpleSecret('db-password', 'hunter2', 'manual')
+      await store.write({ facts: [secret] })
+
+      const secretName = encodeSecretName(undefined, SIMPLE_SECRET_KIND, 'db-password')
+      expect(mockSecretClient.setSecret).toHaveBeenCalledWith(secretName, JSON.stringify(secret))
+    })
+
+    it('cleans up stale secrets using owner prefix listing', async () => {
+      const keepName = encodeSecretName('myapp', 'cluster', 'prod')
+      const staleName = encodeSecretName('myapp', 'cluster', 'old-staging')
 
       mockSecretClient.setSecret.mockResolvedValue({})
-      mockSecretClient.getSecret.mockResolvedValue(
-        makeSecret(
-          mName,
-          JSON.stringify({ secretNames: [keepName, staleName], lastUpdated: '2024-01-01T00:00:00.000Z' }),
-        ),
+      mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
+        (async function* () {
+          yield makeSecretProperties(keepName)
+          yield makeSecretProperties(staleName)
+          yield makeSecretProperties('other--cluster--prod') // different owner
+        })(),
       )
       mockSecretClient.beginDeleteSecret.mockResolvedValue({ pollUntilDone: vi.fn().mockResolvedValue({}) })
 
-      const store = createStore('my/owner')
-      await store.write({ facts: [makeFact('cluster', 'prod', 'my/owner')] })
+      const store = createStore('myapp')
+      await store.write({ facts: [makeFact('cluster', 'prod', 'myapp')] })
 
       expect(mockSecretClient.beginDeleteSecret).toHaveBeenCalledWith(staleName)
       expect(mockSecretClient.beginDeleteSecret).toHaveBeenCalledTimes(1)
     })
 
-    it('skips cleanup when cleanupStale is false', async () => {
-      const mName = manifestSecretName('opsen', 'my/owner')
-
-      mockSecretClient.setSecret.mockResolvedValue({})
-      mockSecretClient.getSecret.mockResolvedValue(
-        makeSecret(mName, JSON.stringify({ secretNames: ['stale'], lastUpdated: '2024-01-01T00:00:00.000Z' })),
-      )
-
-      const store = new AzureFactStore(
-        {
-          vaultUrl: 'https://test.vault.azure.net/',
-          credential: { getToken: vi.fn() } as any,
-          prefix: 'opsen',
-          cleanupStale: false,
-        },
-        'my/owner',
-      )
-      ;(store as any).client = mockSecretClient
-
-      await store.write({ facts: [makeFact('cluster', 'prod', 'my/owner')] })
-
-      expect(mockSecretClient.beginDeleteSecret).not.toHaveBeenCalled()
-    })
-
-    it('does not write manifest when no owner is set', async () => {
+    it('skips cleanup when no owner is set', async () => {
       mockSecretClient.setSecret.mockResolvedValue({})
 
       const store = createStore()
       await store.write({ facts: [makeFact('cluster', 'prod')] })
 
-      // Only fact write, no manifest
-      expect(mockSecretClient.setSecret).toHaveBeenCalledTimes(1)
-      expect(mockSecretClient.getSecret).not.toHaveBeenCalled()
+      expect(mockSecretClient.beginDeleteSecret).not.toHaveBeenCalled()
+      expect(mockSecretClient.listPropertiesOfSecrets).not.toHaveBeenCalled()
+    })
+
+    it('skips cleanup when cleanupStale is false', async () => {
+      mockSecretClient.setSecret.mockResolvedValue({})
+
+      const store = new AzureFactStore({
+        vaultUrl: 'https://test.vault.azure.net/',
+        credential: { getToken: vi.fn() } as any,
+        owner: 'myapp',
+        cleanupStale: false,
+      })
+      ;(store as any).client = mockSecretClient
+
+      await store.write({ facts: [makeFact('cluster', 'prod', 'myapp')] })
+
+      expect(mockSecretClient.beginDeleteSecret).not.toHaveBeenCalled()
     })
 
     it('recovers soft-deleted secret on 409 conflict', async () => {
-      const secretName = encodeSecretName('opsen', 'cluster', 'prod')
+      const secretName = encodeSecretName(undefined, 'cluster', 'prod')
 
       mockSecretClient.setSecret.mockRejectedValueOnce({ statusCode: 409, message: 'Conflict' }).mockResolvedValue({})
       mockSecretClient.beginRecoverDeletedSecret.mockResolvedValue({
@@ -205,90 +246,37 @@ describe('AzureFactStore', () => {
       await store.write({ facts: [makeFact('cluster', 'prod')] })
 
       expect(mockSecretClient.beginRecoverDeletedSecret).toHaveBeenCalledWith(secretName)
-      // setSecret called twice: first fails with 409, then succeeds after recovery
       expect(mockSecretClient.setSecret).toHaveBeenCalledTimes(2)
-    })
-
-    it('handles missing manifest on first write', async () => {
-      mockSecretClient.setSecret.mockResolvedValue({})
-      mockSecretClient.getSecret.mockRejectedValue(new Error('SecretNotFound'))
-
-      const store = createStore('my/owner')
-      await store.write({ facts: [makeFact('cluster', 'prod', 'my/owner')] })
-
-      expect(mockSecretClient.beginDeleteSecret).not.toHaveBeenCalled()
-      // Fact + manifest
-      expect(mockSecretClient.setSecret).toHaveBeenCalledTimes(2)
-    })
-  })
-
-  describe('simple secrets', () => {
-    it('reads simple secrets as raw values reconstructing the fact', async () => {
-      const secretSecretName = encodeSecretName('opsen', SIMPLE_SECRET_KIND, 'db-password')
-      const clusterSecretName = encodeSecretName('opsen', 'cluster', 'prod')
-      const clusterFact = makeFact('cluster', 'prod')
-
-      mockSecretClient.listPropertiesOfSecrets.mockReturnValue(
-        (async function* () {
-          yield makeSecretProperties(secretSecretName)
-          yield makeSecretProperties(clusterSecretName)
-        })(),
-      )
-      mockSecretClient.getSecret.mockImplementation(async (name: string) => {
-        if (name === secretSecretName) return makeSecret(name, 'hunter2')
-        if (name === clusterSecretName) return makeSecret(name, JSON.stringify(clusterFact))
-        return makeSecret(name, '')
-      })
-
-      const store = createStore()
-      const config = await store.read()
-
-      expect(config.facts).toHaveLength(2)
-
-      const secrets = config.facts.filter((f) => f.kind === SIMPLE_SECRET_KIND)
-      expect(secrets).toHaveLength(1)
-      expect(secrets[0]).toEqual({
-        kind: SIMPLE_SECRET_KIND,
-        metadata: { name: 'db-password' },
-        spec: { value: 'hunter2' },
-        owner: '',
-      })
-    })
-
-    it('writes simple secrets as raw values', async () => {
-      mockSecretClient.setSecret.mockResolvedValue({})
-
-      const store = createStore()
-      await store.write({
-        facts: [simpleSecret('db-password', 'hunter2', 'manual'), makeFact('cluster', 'prod')],
-      })
-
-      const secretName = encodeSecretName('opsen', SIMPLE_SECRET_KIND, 'db-password')
-      expect(mockSecretClient.setSecret).toHaveBeenCalledWith(secretName, 'hunter2')
-
-      const clusterName = encodeSecretName('opsen', 'cluster', 'prod')
-      expect(mockSecretClient.setSecret).toHaveBeenCalledWith(clusterName, JSON.stringify(makeFact('cluster', 'prod')))
     })
   })
 
   describe('validation', () => {
     it('rejects invalid kind on write', async () => {
       const store = createStore()
-
       await expect(store.write({ facts: [makeFact('a/b', 'prod')] })).rejects.toThrow('Kind "a/b"')
     })
 
     it('rejects invalid name on write', async () => {
       const store = createStore()
-
       await expect(store.write({ facts: [makeFact('cluster', 'a#b')] })).rejects.toThrow('Name "a#b"')
+    })
+
+    it('rejects dots in kind', async () => {
+      const store = createStore()
+      await expect(store.write({ facts: [makeFact('cluster.v2', 'prod')] })).rejects.toThrow('Kind "cluster.v2"')
+    })
+
+    it('rejects owner with invalid characters', () => {
+      expect(() => new AzureFactStore({ vaultUrl: 'https://test.vault.azure.net/', owner: 'my/owner' })).toThrow(
+        'Owner "my/owner"',
+      )
     })
 
     it('accepts valid kind and name on write', async () => {
       mockSecretClient.setSecret.mockResolvedValue({})
 
       const store = createStore()
-      await store.write({ facts: [makeFact('cluster', 'prod-v2.0')] })
+      await store.write({ facts: [makeFact('cluster', 'prod-v2')] })
 
       expect(mockSecretClient.setSecret).toHaveBeenCalledTimes(1)
     })

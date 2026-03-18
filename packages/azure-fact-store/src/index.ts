@@ -1,3 +1,3 @@
-export * from './azure-fact-store.js'
-export * from './secret-naming.js'
-export * from './types.js'
+export * from './azure-fact-store'
+export * from './secret-naming'
+export * from './types'
