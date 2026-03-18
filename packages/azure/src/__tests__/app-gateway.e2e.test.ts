@@ -1,23 +1,31 @@
 /**
  * App Gateway E2E test.
  *
- * Tests dynamic-provider REST operations against a real App Gateway in rg-dev.
+ * Tests dynamic-provider REST operations against a real App Gateway.
  * Uses `az account get-access-token` for auth (no SP credentials needed).
  *
- * Prerequisites (created by the test runner or externally):
- *   - App Gateway `AZURE_GATEWAY_NAME_PLACEHOLDER` in rg-dev / germanywestcentral
- *   - DNS zone `example.com` in rg-dev
- *   - Key Vault `AZURE_KEYVAULT_NAME_PLACEHOLDER`
+ * Required environment variables:
+ *   - AZURE_SUBSCRIPTION_ID
+ *   - AZURE_RESOURCE_GROUP
+ *   - AZURE_GATEWAY_NAME
+ *   - AZURE_DNS_ZONE_NAME
+ *   - AZURE_KEYVAULT_NAME
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execSync } from 'node:child_process'
 import { azureApiRequest } from '../app-gateway/azure-connection'
 
-const subscriptionId = 'AZURE_SUBSCRIPTION_ID_PLACEHOLDER'
-const resourceGroupName = 'rg-dev'
-const gatewayName = 'AZURE_GATEWAY_NAME_PLACEHOLDER'
-const dnsZoneName = 'example.com'
-const keyVaultName = 'AZURE_KEYVAULT_NAME_PLACEHOLDER'
+function requireEnv(name: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`Missing required environment variable: ${name}`)
+  return value
+}
+
+const subscriptionId = requireEnv('AZURE_SUBSCRIPTION_ID')
+const resourceGroupName = requireEnv('AZURE_RESOURCE_GROUP')
+const gatewayName = requireEnv('AZURE_GATEWAY_NAME')
+const dnsZoneName = requireEnv('AZURE_DNS_ZONE_NAME')
+const keyVaultName = requireEnv('AZURE_KEYVAULT_NAME')
 
 const gwUrl =
   `https://management.azure.com/subscriptions/${subscriptionId}` +

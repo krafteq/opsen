@@ -3,7 +3,8 @@ import { SIMPLE_SECRET_KIND, simpleSecret } from '@opsen/base-ops'
 import type { InfrastructureFact } from '@opsen/base-ops'
 import { AzureFactStore } from '../azure-fact-store.js'
 
-const VAULT_URL = 'https://AZURE_KEYVAULT_NAME_PLACEHOLDER.vault.azure.net/'
+const VAULT_URL = process.env.AZURE_KEYVAULT_URL!
+if (!VAULT_URL) throw new Error('AZURE_KEYVAULT_URL environment variable is required')
 const RUN_ID = Date.now()
 let testCounter = 0
 

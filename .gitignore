@@ -7,3 +7,12 @@ dist/
 coverage
 
 *.local
+
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+serviceAccountKey.json
+*.kubeconfig

@@ -16,11 +16,13 @@ import {
   WebAppDeployer,
 } from '@opsen/azure'
 
-const location = 'germanywestcentral'
-const resourceGroupName = 'rg-dev'
-const dnsZoneName = 'example.com'
-const kvVaultUrl = 'https://AZURE_KEYVAULT_NAME_PLACEHOLDER.vault.azure.net/'
-const subscriptionId = 'AZURE_SUBSCRIPTION_ID_PLACEHOLDER'
+const config = new pulumi.Config()
+const location = config.require('location')
+const resourceGroupName = config.require('resourceGroupName')
+const dnsZoneName = config.require('dnsZoneName')
+const kvVaultUrl = config.require('kvVaultUrl')
+const kvVaultName = config.require('kvVaultName')
+const subscriptionId = config.require('subscriptionId')
 
 // ═══════════════════════════════════════════════════════════════════
 // PREREQUISITES
@@ -65,7 +67,7 @@ const primaryStorageKey = storageKeys.keys[0].value
 
 // Key Vault secret for WebApp KV reference test
 const kvSecret = new keyvault.Secret('e2e-secret', {
-  vaultName: 'AZURE_KEYVAULT_NAME_PLACEHOLDER',
+  vaultName: kvVaultName,
   resourceGroupName,
   secretName: 'e2e-test-secret',
   properties: {
@@ -156,7 +158,7 @@ const acaTxtRecord = new network.RecordSet('aca-domain-txt', {
   txtRecords: [{ value: [acaDomainVerificationId] }],
 })
 
-// CNAME: aca.example.com → {app-name}.{env-default-domain}
+// CNAME: aca.{dnsZoneName} → {app-name}.{env-default-domain}
 const acaCnameRecord = new network.RecordSet('aca-domain-cname', {
   resourceGroupName,
   zoneName: dnsZoneName,
@@ -183,7 +185,7 @@ const test2Result = pulumi.all([acaTxtRecord.id, acaCnameRecord.id]).apply(() =>
       public: {
         backend: { process: 'web', port: 'http' },
         ingress: {
-          hosts: ['aca.example.com'],
+          hosts: [`aca.${dnsZoneName}`],
         },
       },
     },
@@ -312,11 +314,11 @@ const test4Result = pulumi
     })
 
     new web.WebAppHostNameBinding(
-      'e2e-wafull-web-webapp-az-krafteq-de',
+      `e2e-wafull-web-webapp-${dnsZoneName.replace(/\./g, '-')}`,
       {
         name: deployed.app.name,
         resourceGroupName,
-        hostName: 'webapp.example.com',
+        hostName: `webapp.${dnsZoneName}`,
       },
       { dependsOn: [txtRecord, cnameRecord] },
     )
@@ -355,7 +357,7 @@ const test5Result = pulumi.all([kvSecret.properties]).apply(() => {
   deployed.app.identity.apply((identity) => {
     if (identity?.principalId) {
       new authorization.RoleAssignment('e2e-webapp-kv-role', {
-        scope: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroupName}/providers/Microsoft.KeyVault/vaults/AZURE_KEYVAULT_NAME_PLACEHOLDER`,
+        scope: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroupName}/providers/Microsoft.KeyVault/vaults/${kvVaultName}`,
         principalId: identity.principalId,
         principalType: 'ServicePrincipal',
         roleDefinitionId: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6`,
