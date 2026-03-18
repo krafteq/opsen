@@ -1,6 +1,6 @@
 {
   "name": "@opsen/docker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Docker single-host runtime deployer with Caddy ingress",
   "main": "src/index.ts",
   "files": [
