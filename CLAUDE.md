@@ -10,24 +10,36 @@ This is a **library monorepo** — there is no CLI. All packages are published t
 
 ## Packages
 
-| Package           | Description                                                                 |
-| ----------------- | --------------------------------------------------------------------------- |
-| `@opsen/platform` | Workload type system, RuntimeDeployer interface, utility types (standalone) |
-| `@opsen/base-ops` | Facts system, deployer pipeline, config management                          |
-| `@opsen/k8s`      | Kubernetes runtime deployer + building blocks                               |
-| `@opsen/docker`   | Docker single-host deployer with Caddy ingress + building blocks            |
-| `@opsen/azure`    | Azure Container Apps runtime deployer + building blocks                     |
-| `@opsen/k8s-ops`  | Generic K8s cluster components (cert-manager, ingress-nginx, monitoring)    |
+| Package                   | Description                                                                 |
+| ------------------------- | --------------------------------------------------------------------------- |
+| `@opsen/platform`         | Workload type system, RuntimeDeployer interface, utility types (standalone) |
+| `@opsen/base-ops`         | Facts system, deployer pipeline, config management                          |
+| `@opsen/k8s`              | Kubernetes runtime deployer + building blocks                               |
+| `@opsen/docker`           | Docker single-host deployer with Caddy ingress + building blocks            |
+| `@opsen/azure`            | Azure Container Apps + Web App deployers, App Gateway WAF, cert renewal     |
+| `@opsen/k8s-ops`          | Generic K8s cluster components (cert-manager, ingress-nginx, monitoring)    |
+| `@opsen/cert-renewer`     | ACME certificate renewal CLI and Azure Function for Key Vault + App Gateway |
+| `@opsen/vault-fact-store` | HashiCorp Vault KV v2 backend for FactStore                                 |
+| `@opsen/azure-fact-store` | Azure Key Vault backend for FactStore                                       |
+| `@opsen/docker-compose`   | SSH-based Docker Compose deployer with MirrorState file sync                |
+| `@opsen/powerdns`         | Pulumi dynamic providers for PowerDNS authoritative server and Recursor     |
+| `@opsen/agent`            | VM deploy agent — Docker Compose, Caddy ingress, PostgreSQL via mTLS        |
 
 ### Dependency Graph
 
 ```text
-@opsen/platform   (standalone — workload types, RuntimeDeployer, interfaces)
-@opsen/base-ops   (standalone — renamed from infra — facts, modules, pipeline)
-@opsen/k8s        → platform
-@opsen/docker     → platform
-@opsen/azure      → platform
-@opsen/k8s-ops    → platform, k8s
+@opsen/platform          (standalone — workload types, RuntimeDeployer, interfaces)
+@opsen/base-ops          (standalone — facts, modules, pipeline)
+@opsen/k8s               → platform
+@opsen/docker            → platform
+@opsen/azure             → platform, cert-renewer
+@opsen/k8s-ops           → platform, k8s
+@opsen/vault-fact-store  → base-ops
+@opsen/azure-fact-store  → base-ops
+@opsen/cert-renewer      (standalone)
+@opsen/docker-compose    (standalone)
+@opsen/powerdns          (standalone)
+@opsen/agent             (standalone — Go binary + Pulumi installer)
 ```
 
 Inter-package dependencies use `file:` relative paths (not `workspace:*`) so external consumers can reference opsen packages via `file:` during development.
@@ -64,9 +76,16 @@ Each runtime package implements `RuntimeDeployer` from `@opsen/platform`. It tak
 
 Each runtime deployer also exports standalone building-block functions (e.g. `parseResourceRequirements`, `generateCaddyfile`, `buildContainerAppSpec`) that can be used independently without the full deployer pipeline.
 
+### Azure Deployer Hierarchy
+
+All Azure deployers extend `AzureDeployer` base class which manages a shared Azure Native provider keyed by name and provides `options()` helper for provider injection:
+
+- **Infrastructure deployers**: `AppGatewayDeployer`, `CertRenewalFunctionDeployer`, `CertRenewalJobDeployer`, `ContainerAppDeployer`, `WebAppDeployer`
+- **Runtime deployers** (implement `RuntimeDeployer`): `AzureRuntimeDeployer` (Container Apps), `AzureWebAppRuntimeDeployer` (Web Apps)
+
 ### Facts System
 
-`@opsen/base-ops` provides a typed facts system for passing structured state between Pulumi stacks. Facts are kind+metadata+spec objects indexed in a FactsPool for O(1) lookup by kind+name.
+`@opsen/base-ops` provides a typed facts system for passing structured state between Pulumi stacks. Facts are kind+metadata+spec objects indexed in a FactsPool for O(1) lookup by kind+name. FactStore backends: `PulumiFactStore` (built-in), `@opsen/vault-fact-store` (Vault KV v2), `@opsen/azure-fact-store` (Azure Key Vault).
 
 ### K8s Ops Components
 

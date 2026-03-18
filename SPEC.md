@@ -138,4 +138,4 @@ These fields are invisible when writing runtime-agnostic code and fully type-che
 - **More runtimes.** AWS ECS/Fargate and Google Cloud Run are natural next targets.
 - **Resource providers.** The internal platform that consumes Opsen has resource providers for managed databases, object storage, and email. A generic resource provider interface in `@opsen/platform` could make these shareable.
 - **Validation.** Pre-deployment validation that catches misconfigurations (e.g., ingress endpoint without ports, volume mount without volume definition) before `pulumi up`.
-- **More FactStore implementations.** The FactStore abstraction is in place; community implementations for HashiCorp Vault, Azure Key Vault, AWS Secrets Manager, and other backends are natural extensions.
+- **More FactStore implementations.** HashiCorp Vault (`@opsen/vault-fact-store`) and Azure Key Vault (`@opsen/azure-fact-store`) are implemented. AWS Secrets Manager and other backends are natural extensions.
