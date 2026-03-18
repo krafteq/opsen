@@ -105,7 +105,9 @@ export function buildWebAppSpec(
       port = backendPort.port
     }
 
-    if (endpoint.ingress?.hosts) {
+    // Skip custom hostname binding for WAF endpoints — traffic routes through
+    // App Gateway using the Web App's default *.azurewebsites.net hostname as backend.
+    if (endpoint.ingress?.hosts && !endpoint.ingress?._az?.waf) {
       const hosts = endpoint.ingress.hosts as string[]
       customHostnames.push(...hosts)
     }

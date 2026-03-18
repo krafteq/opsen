@@ -34,6 +34,36 @@ function kvSecretUrl(vaultName: string, name: string): string {
   return `https://${vaultName}.vault.azure.net/secrets/${name}?api-version=7.4`
 }
 
+function kvDeletedSecretUrl(vaultName: string, name: string): string {
+  return `https://${vaultName}.vault.azure.net/deletedsecrets/${name}?api-version=7.4`
+}
+
+/**
+ * Recover a soft-deleted secret and wait for it to become available.
+ * Key Vault soft-delete means secrets aren't immediately purged on DELETE —
+ * they must be recovered before they can be overwritten with PUT.
+ */
+async function recoverSoftDeletedSecret(vaultName: string, name: string, token: string): Promise<void> {
+  const recoverUrl = `https://${vaultName}.vault.azure.net/deletedsecrets/${name}/recover?api-version=7.4`
+  await azureApiRequest('POST', recoverUrl, token)
+  // Poll until the secret is available again (recovery can take a few seconds)
+  const url = kvSecretUrl(vaultName, name)
+  for (let i = 0; i < 30; i++) {
+    const { status } = await azureApiRequest('GET', url, token).catch(() => ({ status: 404 }))
+    if (status !== 404) return
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
+function isConflict(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message.includes('409') ||
+      err.message.includes('Conflict') ||
+      err.message.includes('ObjectIsDeletedButRecoverable'))
+  )
+}
+
 /**
  * Creates a tagged Key Vault secret placeholder for the cert-renewer job to discover.
  * The job handles actual ACME issuance and renewal.
@@ -57,13 +87,28 @@ const acmeCertificateProvider: pulumi.dynamic.ResourceProvider = {
       'acme-staging': String(inputs.staging),
     }
 
-    // Create placeholder secret — cert-renewer job will fill with real PFX
-    await azureApiRequest('PUT', url, kvToken, {
-      value: 'pending',
-      contentType: 'application/x-pkcs12',
-      tags,
-      attributes: { enabled: true },
-    })
+    // Create placeholder secret — cert-renewer job will fill with real PFX.
+    // If the secret was soft-deleted (e.g. after a destroy + re-apply), recover it first.
+    try {
+      await azureApiRequest('PUT', url, kvToken, {
+        value: 'pending',
+        contentType: 'application/x-pkcs12',
+        tags,
+        attributes: { enabled: true },
+      })
+    } catch (err) {
+      if (isConflict(err)) {
+        await recoverSoftDeletedSecret(inputs.keyVaultName, name, kvToken)
+        await azureApiRequest('PUT', url, kvToken, {
+          value: 'pending',
+          contentType: 'application/x-pkcs12',
+          tags,
+          attributes: { enabled: true },
+        })
+      } else {
+        throw err
+      }
+    }
 
     const keyVaultSecretId = `https://${inputs.keyVaultName}.vault.azure.net/secrets/${name}`
     const outs: AcmeCertificateOutputs = { ...inputs, keyVaultSecretId }
@@ -116,6 +161,11 @@ const acmeCertificateProvider: pulumi.dynamic.ResourceProvider = {
     const kvToken = await getAzureToken(props.connection, KV_SCOPE)
     const url = kvSecretUrl(props.keyVaultName, id)
     await azureApiRequest('DELETE', url, kvToken)
+    // Purge the soft-deleted secret so re-creates don't hit 409 Conflict
+    const purgeUrl = kvDeletedSecretUrl(props.keyVaultName, id)
+    // Wait briefly for the delete to propagate before purging
+    await new Promise((r) => setTimeout(r, 2000))
+    await azureApiRequest('DELETE', purgeUrl, kvToken).catch(() => {})
   },
 
   async diff(_id: string, olds: AcmeCertificateOutputs, news: AcmeCertificateProviderInputs) {
