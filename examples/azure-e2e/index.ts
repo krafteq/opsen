@@ -130,6 +130,7 @@ const acaWorkload: Workload<AzureRuntime> = {
 }
 
 const acaDeployer = new AzureRuntimeDeployer({
+  name: 'e2e-aca',
   environmentId: acaEnv.id,
   resourceGroupName,
   location,
@@ -191,6 +192,7 @@ const test2Result = pulumi.all([acaTxtRecord.id, acaCnameRecord.id]).apply(() =>
   const spec = buildContainerAppSpec(wl as any, { name: 'e2e-aca-domain' }, 'web', wl.processes.web as any)
 
   const deployer = new ContainerAppDeployer({
+    name: 'e2e-aca-domain',
     environmentId: acaEnv.id,
     resourceGroupName,
     location,
@@ -278,6 +280,7 @@ const test4Result = pulumi
     })
 
     const deployer = new WebAppDeployer({
+      name: 'e2e-wafull',
       appServicePlanId: appServicePlan.id,
       resourceGroupName,
       location,
@@ -339,6 +342,7 @@ const test5Result = pulumi.all([kvSecret.properties]).apply(() => {
   }
 
   const deployer = new WebAppDeployer({
+    name: 'e2e-wakv',
     appServicePlanId: appServicePlan.id,
     resourceGroupName,
     location,

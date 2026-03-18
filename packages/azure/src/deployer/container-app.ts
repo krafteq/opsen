@@ -1,14 +1,11 @@
 import * as app from '@pulumi/azure-native/app'
 import { input as inputs } from '@pulumi/azure-native/types'
 import * as pulumi from '@pulumi/pulumi'
+import { AzureDeployer, AzureDeployParams } from './base'
 
-export interface ContainerAppDeployerArgs {
+export interface ContainerAppDeployParams extends AzureDeployParams {
   /** Azure Container Apps Environment ID */
   environmentId: pulumi.Input<string>
-  /** Resource group name */
-  resourceGroupName: pulumi.Input<string>
-  /** Location/region */
-  location?: pulumi.Input<string>
   /** Container registry credentials */
   registries?: ContainerAppRegistry[]
 }
@@ -79,9 +76,7 @@ export interface DeployedContainerApp {
  * Deploys an Azure Container App resource with full configuration support:
  * health probes, CORS, custom domains, secret volumes (files), registries.
  */
-export class ContainerAppDeployer {
-  constructor(private readonly args: ContainerAppDeployerArgs) {}
-
+export class ContainerAppDeployer extends AzureDeployer<ContainerAppDeployParams> {
   deploy(spec: ContainerAppSpec): DeployedContainerApp {
     // Build secrets from secretEnv + registry passwords
     const secrets: pulumi.Input<inputs.app.SecretArgs>[] = []
@@ -107,7 +102,7 @@ export class ContainerAppDeployer {
 
     // Registry password secrets
     const registries: pulumi.Input<inputs.app.RegistryCredentialsArgs>[] = []
-    for (const reg of this.args.registries ?? []) {
+    for (const reg of this.params.registries ?? []) {
       registries.push({
         server: reg.server,
         username: reg.username,
@@ -144,8 +139,6 @@ export class ContainerAppDeployer {
     }))
 
     // Files — mounted as ACA secret volumes grouped by parent directory.
-    // Each unique parent directory gets one secret volume containing all files for that directory.
-    // Note: this replaces the entire directory — files should target dedicated paths (e.g. /etc/myapp/).
     if (fileSecrets.length > 0 && spec.files) {
       const filesByDir = new Map<string, { secretName: string; fileName: string }[]>()
       for (let i = 0; i < spec.files.length; i++) {
@@ -214,39 +207,43 @@ export class ContainerAppDeployer {
       }
     }
 
-    const containerApp = new app.ContainerApp(spec.name, {
-      containerAppName: spec.name,
-      resourceGroupName: this.args.resourceGroupName,
-      environmentId: this.args.environmentId,
-      location: this.args.location,
-      ...(spec.workloadProfileName ? { workloadProfileType: spec.workloadProfileName } : {}),
-      configuration: {
-        ingress,
-        registries: registries.length > 0 ? registries : undefined,
-        secrets: secrets.length > 0 ? secrets : undefined,
-      },
-      template: {
-        containers: [
-          {
-            name: spec.name,
-            image: spec.image,
-            command: spec.command,
-            env: envVars.length > 0 ? envVars : undefined,
-            resources: {
-              cpu: spec.cpuCores ?? 0.25,
-              memory: `${spec.memoryGi ?? 0.5}Gi`,
-            },
-            volumeMounts: volumeMounts.length > 0 ? volumeMounts : undefined,
-            probes: probes.length > 0 ? probes : undefined,
-          },
-        ],
-        scale: {
-          minReplicas: spec.minReplicas ?? 0,
-          maxReplicas: spec.maxReplicas ?? 1,
+    const containerApp = new app.ContainerApp(
+      spec.name,
+      {
+        containerAppName: spec.name,
+        resourceGroupName: this.resourceGroupName,
+        environmentId: this.params.environmentId,
+        location: this.location,
+        ...(spec.workloadProfileName ? { workloadProfileType: spec.workloadProfileName } : {}),
+        configuration: {
+          ingress,
+          registries: registries.length > 0 ? registries : undefined,
+          secrets: secrets.length > 0 ? secrets : undefined,
         },
-        volumes: volumes.length > 0 ? volumes : undefined,
+        template: {
+          containers: [
+            {
+              name: spec.name,
+              image: spec.image,
+              command: spec.command,
+              env: envVars.length > 0 ? envVars : undefined,
+              resources: {
+                cpu: spec.cpuCores ?? 0.25,
+                memory: `${spec.memoryGi ?? 0.5}Gi`,
+              },
+              volumeMounts: volumeMounts.length > 0 ? volumeMounts : undefined,
+              probes: probes.length > 0 ? probes : undefined,
+            },
+          ],
+          scale: {
+            minReplicas: spec.minReplicas ?? 0,
+            maxReplicas: spec.maxReplicas ?? 1,
+          },
+          volumes: volumes.length > 0 ? volumes : undefined,
+        },
       },
-    })
+      this.options(),
+    )
 
     const fqdn = containerApp.configuration.apply((cfg) => cfg?.ingress?.fqdn ?? '')
 
@@ -258,3 +255,6 @@ export class ContainerAppDeployer {
 function toSecretName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
 }
+
+/** @deprecated Use ContainerAppDeployParams instead */
+export type ContainerAppDeployerArgs = ContainerAppDeployParams

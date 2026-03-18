@@ -18,6 +18,8 @@ import {
 } from './app-gateway/providers'
 
 export interface AzureWebAppDeployerArgs {
+  /** Unique name for this deployer context (used for Azure provider naming) */
+  name: string
   /** App Service Plan ID */
   appServicePlanId: pulumi.Input<string>
   /** Resource group name */
@@ -58,6 +60,7 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
   constructor(args: AzureWebAppDeployerArgs) {
     this.args = args
     this.deployer = new WebAppDeployer({
+      name: args.name,
       appServicePlanId: args.appServicePlanId,
       resourceGroupName: args.resourceGroupName,
       location: args.location,

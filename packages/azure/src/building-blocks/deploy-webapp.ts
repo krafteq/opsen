@@ -2,6 +2,8 @@ import * as pulumi from '@pulumi/pulumi'
 import { WebAppSpec, WebAppDeployer, DeployedWebApp } from '../deployer/web-app'
 
 export interface DeployWebAppArgs {
+  /** Unique name for this deployer context */
+  name: string
   /** App Service Plan ID */
   appServicePlanId: pulumi.Input<string>
   /** Resource group name */
@@ -29,6 +31,7 @@ export interface DeployWebAppArgs {
  */
 export function deployWebApp(spec: WebAppSpec, args: DeployWebAppArgs): DeployedWebApp {
   const deployer = new WebAppDeployer({
+    name: args.name,
     appServicePlanId: args.appServicePlanId,
     resourceGroupName: args.resourceGroupName,
     location: args.location,

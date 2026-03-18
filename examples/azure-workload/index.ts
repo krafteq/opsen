@@ -12,6 +12,7 @@ const environmentId = config.require('environmentId')
 
 // Create the Azure Container Apps runtime deployer
 const runtime = new AzureRuntimeDeployer({
+  name: 'myapp',
   environmentId,
   resourceGroupName,
   location,

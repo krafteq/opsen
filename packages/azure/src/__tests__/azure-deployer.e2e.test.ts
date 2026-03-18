@@ -48,6 +48,7 @@ describe.skipIf(!canRun)('AzureRuntimeDeployer e2e', () => {
         const { AzureRuntimeDeployer } = await import('../runtime-deployer.js')
 
         const deployer = new AzureRuntimeDeployer({
+          name: 'e2e-azure',
           environmentId: env.environmentId,
           resourceGroupName: env.resourceGroupName,
           location: env.location,
