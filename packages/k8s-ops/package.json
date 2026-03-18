@@ -13,8 +13,8 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@opsen/platform": "file:../platform",
-    "@opsen/k8s": "file:../k8s",
+    "@opsen/platform": "workspace:^",
+    "@opsen/k8s": "workspace:^",
     "@pulumi/kubernetes": "^4.21.1",
     "@pulumi/pulumi": "^3.152.0",
     "@pulumi/random": "^4.16.3"

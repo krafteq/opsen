@@ -13,7 +13,7 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@opsen/base-ops": "file:../base-ops"
+    "@opsen/base-ops": "workspace:^"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.0",

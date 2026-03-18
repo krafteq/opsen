@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsc --build && node scripts/build-azure-function.mjs",
+    "prepack": "node scripts/build-azure-function.mjs",
     "build:tsc": "tsc --build",
     "build:function": "node scripts/build-azure-function.mjs",
     "clean": "tsc --build --clean && rm -rf dist/azure-function dist/azure-function.zip",
