@@ -1,0 +1,6 @@
+name: opsen-azure-e2e
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: E2E tests for Opsen Azure deployers (Container Apps + Web Apps)

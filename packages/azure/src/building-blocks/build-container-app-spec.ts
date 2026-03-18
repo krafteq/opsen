@@ -1,6 +1,14 @@
 import * as pulumi from '@pulumi/pulumi'
-import { AzureContainerAppsRuntime, Workload, WorkloadProcess, WorkloadMetadata, Probe } from '@opsen/platform'
+import { Workload, WorkloadProcess, WorkloadMetadata, Probe } from '@opsen/platform'
+import type { AzureRuntime } from '../runtime'
 import { ContainerAppSpec, ContainerAppProbeSpec, ContainerAppVolumeSpec } from '../deployer/container-app'
+
+export interface BuildContainerAppSpecOptions {
+  /** Storage account name for persistent AzureFile volumes */
+  storageName?: string
+  /** Workload profile name for Container Apps */
+  workloadProfileName?: string
+}
 
 /**
  * Build a `ContainerAppSpec` from a workload, metadata, and a single process.
@@ -9,10 +17,11 @@ import { ContainerAppSpec, ContainerAppProbeSpec, ContainerAppVolumeSpec } from 
  * Use with `ContainerAppDeployer.deploy()` or `deployContainerApp()` to actually deploy.
  */
 export function buildContainerAppSpec(
-  wl: pulumi.Unwrap<Workload<AzureContainerAppsRuntime>>,
+  wl: pulumi.Unwrap<Workload<AzureRuntime>>,
   metadata: WorkloadMetadata,
   processName: string,
-  process: pulumi.Unwrap<WorkloadProcess<AzureContainerAppsRuntime>>,
+  process: pulumi.Unwrap<WorkloadProcess<AzureRuntime>>,
+  options?: BuildContainerAppSpecOptions,
 ): ContainerAppSpec {
   const appName = `${metadata.name}-${processName}`
 
@@ -36,8 +45,8 @@ export function buildContainerAppSpec(
   const volumes: ContainerAppVolumeSpec[] = Object.entries(processVolumes).map(([volName, volSpec]) => ({
     name: volName,
     mountPath: volSpec.path,
-    storageType: volSpec._aca?.storageType ?? 'EmptyDir',
-    storageName: volSpec._aca?.storageName,
+    storageType: volSpec._az?.persistent ? 'AzureFile' : 'EmptyDir',
+    storageName: volSpec._az?.persistent ? options?.storageName : undefined,
   }))
 
   const probes: ContainerAppProbeSpec[] = []
@@ -74,27 +83,22 @@ export function buildContainerAppSpec(
 
       const hosts = (endpoint.ingress.hosts as string[]) ?? []
       for (const host of hosts) {
-        const acaDomains = endpoint.ingress._aca?.customDomains ?? []
-        const domainConfig = acaDomains.find((d: { name: string }) => d.name === host)
-        customDomains.push({
-          name: host,
-          certificateId: domainConfig?.certificateId,
-        })
+        customDomains.push({ name: host })
       }
     }
   }
 
   const scale = process.scale ?? wl.scale ?? 1
-  const minReplicas = process._aca?.minReplicas ?? 0
-  const maxReplicas = process._aca?.maxReplicas ?? Math.max(scale, 1)
+  const minReplicas = process._az?.minReplicas ?? 0
+  const maxReplicas = process._az?.maxReplicas ?? Math.max(scale, 1)
 
   return {
     name: appName,
     image: image as string,
     command: cmd as string[] | undefined,
     env,
-    cpuCores: process._aca?.cpuCores ?? 0.25,
-    memoryGi: process._aca?.memoryGi ?? 0.5,
+    cpuCores: process._az?.cpu ?? 0.25,
+    memoryGi: process._az?.memory ?? 0.5,
     minReplicas,
     maxReplicas,
     targetPort,
@@ -111,7 +115,7 @@ export function buildContainerAppSpec(
     volumes,
     probes,
     files: allFiles.length > 0 ? allFiles : undefined,
-    workloadProfileName: wl._aca?.workloadProfileName,
+    workloadProfileName: options?.workloadProfileName,
   }
 }
 
