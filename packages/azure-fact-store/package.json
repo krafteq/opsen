@@ -1,6 +1,6 @@
 {
   "name": "@opsen/azure-fact-store",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Azure Key Vault backend for Opsen FactStore",
   "main": "src/index.ts",
   "files": [

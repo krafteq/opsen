@@ -1,5 +1,11 @@
 # @opsen/powerdns
 
+## 0.2.1
+
+### Patch Changes
+
+- 2fa5204: Fix CI build failures and resolve Dependabot security alerts. Add `src` to package `files` field for correct pnpm `file:` dependency resolution during clean builds. Pin TypeScript to 5.8.x and unify `@pulumi/pulumi` version to avoid type mismatches. Update `@eslint/json`, `@eslint/markdown`, and add pnpm overrides for `flatted` and `minimatch` vulnerabilities.
+
 ## 0.2.0
 
 ### Minor Changes
