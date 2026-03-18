@@ -1,8 +1,8 @@
 {
-  "name": "@opsen/base-ops",
+  "name": "@opsen/azure-fact-store",
   "version": "0.1.0",
-  "description": "Infrastructure facts, deployer, and module system for Pulumi",
-  "main": "dist/index.js",
+  "description": "Azure Key Vault backend for Opsen FactStore",
+  "main": "src/index.ts",
   "files": [
     "dist"
   ],
@@ -12,7 +12,9 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@pulumi/pulumi": "^3.152.0"
+    "@opsen/base-ops": "file:../base-ops",
+    "@azure/keyvault-secrets": "^4.9.0",
+    "@azure/identity": "^4.6.0"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.0",

@@ -3,6 +3,7 @@ import type { FactStoreReader, FactStoreWriter } from '../fact-store.js'
 import type { InfrastructureConfig } from '../config.js'
 import { InfrastructureFactsPool } from '../facts-pool.js'
 import { InfrastructureConfigMerger } from '../config-merger.js'
+import { simpleSecret, SIMPLE_SECRET_KIND, type SimpleSecretFact } from '../fact.js'
 
 describe('FactStoreReader', () => {
   it('returns facts from a mock reader', async () => {
@@ -156,5 +157,30 @@ describe('PulumiFactStore', () => {
     const config = await store.read()
 
     expect(config).toEqual({ facts: [] })
+  })
+})
+
+describe('SimpleSecret', () => {
+  it('creates a simple secret fact', () => {
+    const fact = simpleSecret('db-password', 'hunter2', 'admin')
+
+    expect(fact).toEqual({
+      kind: SIMPLE_SECRET_KIND,
+      metadata: { name: 'db-password' },
+      spec: { value: 'hunter2' },
+      owner: 'admin',
+    })
+  })
+
+  it('works with FactsPool lookup', () => {
+    const config: InfrastructureConfig = {
+      facts: [simpleSecret('db-password', 'hunter2', 'admin'), simpleSecret('api-key', 's3cr3t', 'admin')],
+    }
+
+    const pool = new InfrastructureFactsPool(config)
+    const secret = pool.requireFact<SimpleSecretFact>(SIMPLE_SECRET_KIND, 'db-password')
+
+    expect(secret.spec.value).toBe('hunter2')
+    expect(pool.getAll(SIMPLE_SECRET_KIND)).toHaveLength(2)
   })
 })

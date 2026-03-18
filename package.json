@@ -41,6 +41,12 @@
       "path": "cz-conventional-changelog"
     }
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "cpu-features",
+      "ssh2"
+    ]
+  },
   "devDependencies": {
     "@changesets/cli": "^2.28.0",
     "@commitlint/cli": "^19.8.1",

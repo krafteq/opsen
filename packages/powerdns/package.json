@@ -1,8 +1,8 @@
 {
-  "name": "@opsen/base-ops",
+  "name": "@opsen/powerdns",
   "version": "0.1.0",
-  "description": "Infrastructure facts, deployer, and module system for Pulumi",
-  "main": "dist/index.js",
+  "description": "Pulumi dynamic providers for PowerDNS authoritative server and Recursor",
+  "main": "src/index.ts",
   "files": [
     "dist"
   ],
