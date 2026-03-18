@@ -4,11 +4,11 @@ import {
   isDockerAvailable,
   pulumiTest,
   pulumiDestroy,
-  createDockerTestWorkload,
   assertDockerContainerRunning,
   assertDockerNetworkExists,
   assertHttpEndpoint,
 } from '@opsen/testing'
+import { createDockerTestWorkload } from '../testing'
 import type { PulumiTestResult } from '@opsen/testing'
 import type { Stack } from '@pulumi/pulumi/automation/index.js'
 

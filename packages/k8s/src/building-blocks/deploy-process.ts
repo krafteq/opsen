@@ -3,7 +3,6 @@ import * as k8s from '@pulumi/kubernetes'
 import { strict as assert } from 'assert'
 import {
   DeployedProcess,
-  KubernetesRuntime,
   Workload,
   WorkloadProcess,
   WorkloadMetadata,
@@ -11,6 +10,7 @@ import {
   Probe,
   ProcessPortProtocol,
 } from '@opsen/platform'
+import type { KubernetesRuntime } from '../runtime'
 import { Resource } from '@pulumi/pulumi'
 import { input as inputs } from '@pulumi/kubernetes/types'
 import { parseResourceRequirements } from './resource-requirements'

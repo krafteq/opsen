@@ -1,13 +1,7 @@
 import * as docker from '@pulumi/docker'
 import * as pulumi from '@pulumi/pulumi'
-import {
-  RuntimeDeployer,
-  DockerRuntime,
-  Workload,
-  WorkloadMetadata,
-  DeployedWorkload,
-  DeployedServiceEndpoint,
-} from '@opsen/platform'
+import { RuntimeDeployer, Workload, WorkloadMetadata, DeployedWorkload, DeployedServiceEndpoint } from '@opsen/platform'
+import type { DockerRuntime } from './runtime'
 import { DockerWorkloadDeployer } from './workload/workload-deployer'
 import { CaddyIngressDeployer } from './ingress/caddy'
 

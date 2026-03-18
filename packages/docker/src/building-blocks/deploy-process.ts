@@ -1,6 +1,7 @@
 import * as docker from '@pulumi/docker'
 import { input as inputs } from '@pulumi/docker/types'
-import { DockerRuntime, Workload, WorkloadProcess, WorkloadMetadata, ProcessPortProtocol } from '@opsen/platform'
+import { Workload, WorkloadProcess, WorkloadMetadata, ProcessPortProtocol } from '@opsen/platform'
+import type { DockerRuntime } from '../runtime'
 import * as pulumi from '@pulumi/pulumi'
 
 export interface DeployDockerProcessArgs {

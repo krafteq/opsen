@@ -3,7 +3,6 @@ import {
   DeployedProcess,
   DeployedServiceEndpoint,
   DeployedWorkload,
-  KubernetesRuntime,
   Probe,
   ProcessPortProtocol,
   Workload,
@@ -11,6 +10,7 @@ import {
   WorkloadMetadata,
   StorageClassRequest,
 } from '@opsen/platform'
+import type { KubernetesRuntime } from '../runtime'
 import * as pulumi from '@pulumi/pulumi'
 import * as k8s from '@pulumi/kubernetes'
 import { strict as assert } from 'assert'

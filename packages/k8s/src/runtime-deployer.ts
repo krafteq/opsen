@@ -1,12 +1,6 @@
 import * as pulumi from '@pulumi/pulumi'
-import {
-  RuntimeDeployer,
-  KubernetesRuntime,
-  Workload,
-  WorkloadMetadata,
-  DeployedWorkload,
-  StorageClassMeta,
-} from '@opsen/platform'
+import { RuntimeDeployer, Workload, WorkloadMetadata, DeployedWorkload, StorageClassMeta } from '@opsen/platform'
+import type { KubernetesRuntime } from './runtime'
 import { KubernetesDeployParams, NamespacesDeployer, ImageRegistryDeployer, ImageRegistrySecret } from './deployer'
 import { WorkloadDeployer, IngressInfo } from './workload/workload-deployer'
 
