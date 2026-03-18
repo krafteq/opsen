@@ -1,6 +1,6 @@
 {
   "name": "@opsen/cert-renewer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "ACME certificate renewal for Azure Key Vault + App Gateway",
   "type": "module",
   "main": "dist/index.js",
