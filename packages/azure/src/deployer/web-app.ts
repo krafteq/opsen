@@ -1,14 +1,11 @@
 import * as web from '@pulumi/azure-native/web'
 import { input as inputs } from '@pulumi/azure-native/types'
 import * as pulumi from '@pulumi/pulumi'
+import { AzureDeployer, AzureDeployParams } from './base'
 
-export interface WebAppDeployerArgs {
+export interface WebAppDeployParams extends AzureDeployParams {
   /** App Service Plan ID */
   appServicePlanId: pulumi.Input<string>
-  /** Resource group name */
-  resourceGroupName: pulumi.Input<string>
-  /** Azure region */
-  location?: pulumi.Input<string>
   /** Key Vault for secret references */
   keyVault: { vaultUrl: string; identityId?: pulumi.Input<string> }
   /** Storage account for Azure Files mounts */
@@ -52,20 +49,18 @@ export interface DeployedWebApp {
  * Deploys an Azure Linux Web App for Containers.
  * Supports Key Vault secret references, Azure Files mounts, health checks, and custom hostnames.
  */
-export class WebAppDeployer {
-  constructor(private readonly args: WebAppDeployerArgs) {}
-
+export class WebAppDeployer extends AzureDeployer<WebAppDeployParams> {
   deploy(spec: WebAppSpec): DeployedWebApp {
     const appSettings: inputs.web.NameValuePairArgs[] = []
 
     // Docker registry (only when a private registry is configured)
-    if (this.args.registry) {
-      appSettings.push({ name: 'DOCKER_REGISTRY_SERVER_URL', value: `https://${this.args.registry.server}` })
-      if (this.args.registry.username) {
-        appSettings.push({ name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: this.args.registry.username })
+    if (this.params.registry) {
+      appSettings.push({ name: 'DOCKER_REGISTRY_SERVER_URL', value: `https://${this.params.registry.server}` })
+      if (this.params.registry.username) {
+        appSettings.push({ name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: this.params.registry.username })
       }
-      if (this.args.registry.password) {
-        appSettings.push({ name: 'DOCKER_REGISTRY_SERVER_PASSWORD', value: this.args.registry.password })
+      if (this.params.registry.password) {
+        appSettings.push({ name: 'DOCKER_REGISTRY_SERVER_PASSWORD', value: this.params.registry.password })
       }
     }
 
@@ -79,24 +74,28 @@ export class WebAppDeployer {
       appSettings.push({ name, value })
     }
 
-    const app = new web.WebApp(spec.name, {
-      name: spec.name,
-      resourceGroupName: this.args.resourceGroupName,
-      location: this.args.location,
-      serverFarmId: this.args.appServicePlanId,
-      httpsOnly: true,
-      identity: {
-        type: web.ManagedServiceIdentityType.SystemAssigned,
+    const appResource = new web.WebApp(
+      spec.name,
+      {
+        name: spec.name,
+        resourceGroupName: this.resourceGroupName,
+        location: this.location,
+        serverFarmId: this.params.appServicePlanId,
+        httpsOnly: true,
+        identity: {
+          type: web.ManagedServiceIdentityType.SystemAssigned,
+        },
+        siteConfig: {
+          linuxFxVersion: `DOCKER|${spec.image}`,
+          alwaysOn: spec.alwaysOn ?? true,
+          healthCheckPath: spec.healthCheckPath,
+          appSettings,
+        },
       },
-      siteConfig: {
-        linuxFxVersion: `DOCKER|${spec.image}`,
-        alwaysOn: spec.alwaysOn ?? true,
-        healthCheckPath: spec.healthCheckPath,
-        appSettings,
-      },
-    })
+      this.options(),
+    )
 
-    // Storage mounts via separate resource (web.WebApp doesn't support inline azureStorageAccounts)
+    // Storage mounts via separate resource
     if (spec.storageMounts && spec.storageMounts.length > 0) {
       const storageProperties: Record<string, pulumi.Input<inputs.web.AzureStorageInfoValueArgs>> = {}
       for (const mount of spec.storageMounts) {
@@ -112,11 +111,11 @@ export class WebAppDeployer {
       new web.WebAppAzureStorageAccounts(
         `${spec.name}-storage`,
         {
-          name: app.name,
-          resourceGroupName: this.args.resourceGroupName,
+          name: appResource.name,
+          resourceGroupName: this.resourceGroupName,
           properties: storageProperties,
         },
-        { parent: app },
+        this.options({ parent: appResource }),
       )
     }
 
@@ -125,16 +124,19 @@ export class WebAppDeployer {
       new web.WebAppHostNameBinding(
         `${spec.name}-${hostname.replace(/\./g, '-')}`,
         {
-          name: app.name,
-          resourceGroupName: this.args.resourceGroupName,
+          name: appResource.name,
+          resourceGroupName: this.resourceGroupName,
           hostName: hostname,
         },
-        { parent: app },
+        this.options({ parent: appResource }),
       )
     }
 
-    const defaultHostname = app.defaultHostName.apply((h) => h ?? '')
+    const defaultHostname = appResource.defaultHostName.apply((h) => h ?? '')
 
-    return { app, defaultHostname }
+    return { app: appResource, defaultHostname }
   }
 }
+
+/** @deprecated Use WebAppDeployParams instead */
+export type WebAppDeployerArgs = WebAppDeployParams

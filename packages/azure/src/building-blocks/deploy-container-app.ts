@@ -7,6 +7,8 @@ import {
 } from '../deployer/container-app'
 
 export interface DeployContainerAppArgs {
+  /** Unique name for this deployer context */
+  name: string
   /** Azure Container Apps Environment ID */
   environmentId: pulumi.Input<string>
   /** Resource group name */
@@ -25,6 +27,7 @@ export interface DeployContainerAppArgs {
  */
 export function deployContainerApp(spec: ContainerAppSpec, args: DeployContainerAppArgs): DeployedContainerApp {
   const deployer = new ContainerAppDeployer({
+    name: args.name,
     environmentId: args.environmentId,
     resourceGroupName: args.resourceGroupName,
     location: args.location,

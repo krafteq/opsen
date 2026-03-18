@@ -25,6 +25,8 @@ export interface AppGatewayAcmeConfig {
 }
 
 export interface AzureRuntimeDeployerArgs {
+  /** Unique name for this deployer context (used for Azure provider naming) */
+  name: string
   /** Azure Container Apps Environment ID */
   environmentId: pulumi.Input<string>
   /** Resource group name */
@@ -61,6 +63,7 @@ export class AzureRuntimeDeployer implements RuntimeDeployer<AzureRuntime> {
   constructor(args: AzureRuntimeDeployerArgs) {
     this.args = args
     this.deployer = new ContainerAppDeployer({
+      name: args.name,
       environmentId: args.environmentId,
       resourceGroupName: args.resourceGroupName,
       location: args.location,
