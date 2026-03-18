@@ -12,6 +12,7 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
+    "@opsen/cert-renewer": "file:../cert-renewer",
     "@opsen/platform": "file:../platform",
     "@pulumi/azure-native": "^2.0.0",
     "@pulumi/pulumi": "^3.152.0"

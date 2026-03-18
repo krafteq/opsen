@@ -1,2 +1,5 @@
 export * from './build-container-app-spec'
+export * from './build-webapp-spec'
+export * from './build-app-gateway-entries'
 export * from './deploy-container-app'
+export * from './deploy-webapp'
