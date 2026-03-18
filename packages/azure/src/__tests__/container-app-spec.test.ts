@@ -64,7 +64,7 @@ describe('buildContainerAppSpec', () => {
     expect(spec.targetPort).toBe(3000)
     expect(spec.corsPolicy).toBeDefined()
     expect(spec.corsPolicy?.allowedOrigins).toEqual(['*'])
-    expect(spec.customDomains).toEqual([{ name: 'app.example.com', certificateId: undefined }])
+    expect(spec.customDomains).toEqual([{ name: 'app.example.com' }])
   })
 
   it('maps liveness probe to spec', () => {

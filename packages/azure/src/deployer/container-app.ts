@@ -1,4 +1,4 @@
-import * as azure from '@pulumi/azure-native'
+import * as app from '@pulumi/azure-native/app'
 import { input as inputs } from '@pulumi/azure-native/types'
 import * as pulumi from '@pulumi/pulumi'
 
@@ -71,7 +71,7 @@ export interface ContainerAppProbeSpec {
 }
 
 export interface DeployedContainerApp {
-  app: azure.app.ContainerApp
+  app: app.ContainerApp
   fqdn: pulumi.Output<string>
 }
 
@@ -143,26 +143,37 @@ export class ContainerAppDeployer {
       mountPath: v.mountPath,
     }))
 
-    // Files volume (secrets-backed)
-    if (fileSecrets.length > 0) {
-      volumes.push({
-        name: 'files',
-        storageType: 'Secret',
-        secrets: fileSecrets.map((f) => ({
-          secretRef: f.secretName,
-          path: f.fileName,
-        })),
-      })
-      // Mount each file at its original path
-      if (spec.files) {
-        for (const file of spec.files) {
-          const dir = file.path.substring(0, file.path.lastIndexOf('/')) || '/'
-          volumeMounts.push({
-            volumeName: 'files',
-            mountPath: dir,
-            subPath: file.path.split('/').pop(),
-          })
-        }
+    // Files — mounted as ACA secret volumes grouped by parent directory.
+    // Each unique parent directory gets one secret volume containing all files for that directory.
+    // Note: this replaces the entire directory — files should target dedicated paths (e.g. /etc/myapp/).
+    if (fileSecrets.length > 0 && spec.files) {
+      const filesByDir = new Map<string, { secretName: string; fileName: string }[]>()
+      for (let i = 0; i < spec.files.length; i++) {
+        const file = spec.files[i]
+        const dir = file.path.substring(0, file.path.lastIndexOf('/')) || '/'
+        const fileName = file.path.split('/').pop() ?? 'file'
+        if (!filesByDir.has(dir)) filesByDir.set(dir, [])
+        filesByDir.get(dir)!.push({
+          secretName: fileSecrets[i].secretName,
+          fileName,
+        })
+      }
+
+      let volIdx = 0
+      for (const [dir, dirFiles] of filesByDir) {
+        const volName = `files-${volIdx++}`
+        volumes.push({
+          name: volName,
+          storageType: 'Secret',
+          secrets: dirFiles.map((f) => ({
+            secretRef: f.secretName,
+            path: f.fileName,
+          })),
+        })
+        volumeMounts.push({
+          volumeName: volName,
+          mountPath: dir,
+        })
       }
     }
 
@@ -203,7 +214,7 @@ export class ContainerAppDeployer {
       }
     }
 
-    const containerApp = new azure.app.ContainerApp(spec.name, {
+    const containerApp = new app.ContainerApp(spec.name, {
       containerAppName: spec.name,
       resourceGroupName: this.args.resourceGroupName,
       environmentId: this.args.environmentId,
