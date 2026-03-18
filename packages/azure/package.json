@@ -13,13 +13,13 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@opsen/cert-renewer": "file:../cert-renewer",
-    "@opsen/platform": "file:../platform",
+    "@opsen/cert-renewer": "workspace:^",
+    "@opsen/platform": "workspace:^",
     "@pulumi/azure-native": "^2.0.0",
     "@pulumi/pulumi": "^3.152.0"
   },
   "devDependencies": {
-    "@opsen/testing": "file:../testing",
+    "@opsen/testing": "workspace:^",
     "@tsconfig/node22": "^22.0.0",
     "typescript": "^5.7.3"
   },

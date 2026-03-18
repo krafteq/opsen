@@ -8,6 +8,7 @@
   "files": [
     "dist",
     "go",
+    "go/out",
     "src"
   ],
   "scripts": {

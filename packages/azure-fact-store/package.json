@@ -13,7 +13,7 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@opsen/base-ops": "file:../base-ops",
+    "@opsen/base-ops": "workspace:^",
     "@azure/keyvault-secrets": "^4.9.0",
     "@azure/identity": "^4.6.0"
   },

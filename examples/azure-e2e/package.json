@@ -6,8 +6,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@opsen/platform": "file:../../packages/platform",
-    "@opsen/azure": "file:../../packages/azure",
+    "@opsen/platform": "workspace:^",
+    "@opsen/azure": "workspace:^",
     "@pulumi/azure-native": "^2.0.0",
     "@pulumi/pulumi": "^3.152.0"
   },

@@ -13,7 +13,7 @@
     "clean": "tsc --build --clean"
   },
   "dependencies": {
-    "@opsen/platform": "file:../platform",
+    "@opsen/platform": "workspace:^",
     "@pulumi/pulumi": "^3.152.0"
   },
   "devDependencies": {
