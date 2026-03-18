@@ -4,11 +4,11 @@ import {
   isAzureAvailable,
   pulumiTest,
   pulumiDestroy,
-  createAzureTestWorkload,
   createAzureTestEnvironment,
   destroyAzureTestEnvironment,
   assertHttpEndpoint,
 } from '@opsen/testing'
+import { createAzureTestWorkload } from '../testing'
 import type { AzureTestEnvironment, PulumiTestResult } from '@opsen/testing'
 import type { Stack } from '@pulumi/pulumi/automation/index.js'
 

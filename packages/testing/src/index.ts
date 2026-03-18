@@ -1,6 +1,5 @@
 export { pulumiTest, pulumiDestroy } from './pulumi-harness'
 export type { PulumiTestOptions, PulumiTestResult } from './pulumi-harness'
-export { createDockerTestWorkload, createAzureTestWorkload, createK8sTestWorkload } from './test-workload'
 export { isPulumiAvailable, isDockerAvailable, isAzureAvailable, isKubernetesAvailable } from './prerequisites'
 export { assertDockerContainerRunning, assertDockerNetworkExists, assertHttpEndpoint } from './assertions'
 export { createAzureTestEnvironment, destroyAzureTestEnvironment } from './azure-helpers'

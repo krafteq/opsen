@@ -1,6 +1,6 @@
 import * as pulumi from '@pulumi/pulumi'
-import { DockerRuntime, Workload } from '@opsen/platform'
-import { DockerRuntimeDeployer } from '@opsen/docker'
+import type { Workload } from '@opsen/platform'
+import { DockerRuntime, DockerRuntimeDeployer } from '@opsen/docker'
 
 // Create a Docker runtime deployer
 const runtime = new DockerRuntimeDeployer({

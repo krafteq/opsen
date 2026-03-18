@@ -10,6 +10,9 @@
     { "path": "packages/testing" },
     { "path": "packages/vault-fact-store" },
     { "path": "packages/azure-fact-store" },
-    { "path": "packages/agent" }
+    { "path": "packages/agent" },
+    { "path": "packages/docker-compose" },
+    { "path": "packages/powerdns" },
+    { "path": "packages/cert-renewer" }
   ]
 }

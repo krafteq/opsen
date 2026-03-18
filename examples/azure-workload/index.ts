@@ -1,7 +1,6 @@
 import * as pulumi from '@pulumi/pulumi'
-import * as azure from '@pulumi/azure-native'
-import { AzureContainerAppsRuntime, Workload } from '@opsen/platform'
-import { AzureRuntimeDeployer } from '@opsen/azure'
+import type { Workload } from '@opsen/platform'
+import { AzureRuntime, AzureRuntimeDeployer } from '@opsen/azure'
 
 const config = new pulumi.Config()
 const location = config.get('location') ?? 'westeurope'
@@ -23,10 +22,11 @@ const runtime = new AzureRuntimeDeployer({
       passwordSecretRef: 'registry-password',
     },
   ],
+  workloadProfileName: 'Consumption',
 })
 
 // Define a multi-process workload: API + background worker
-const workload: Workload<AzureContainerAppsRuntime> = {
+const workload: Workload<AzureRuntime> = {
   image: 'myregistry.azurecr.io/myapp:latest',
 
   env: {
@@ -57,9 +57,9 @@ const workload: Workload<AzureContainerAppsRuntime> = {
           periodSeconds: 5,
         },
       },
-      _aca: {
-        cpuCores: 0.5,
-        memoryGi: 1,
+      _az: {
+        cpu: 0.5,
+        memory: 1,
         minReplicas: 1,
         maxReplicas: 5,
       },
@@ -70,9 +70,9 @@ const workload: Workload<AzureContainerAppsRuntime> = {
       env: {
         QUEUE_NAME: 'tasks',
       },
-      _aca: {
-        cpuCores: 0.25,
-        memoryGi: 0.5,
+      _az: {
+        cpu: 0.25,
+        memory: 0.5,
         minReplicas: 0,
         maxReplicas: 3,
       },
@@ -82,8 +82,8 @@ const workload: Workload<AzureContainerAppsRuntime> = {
   volumes: {
     cache: {
       path: '/tmp/cache',
-      _aca: {
-        storageType: 'EmptyDir',
+      _az: {
+        persistent: false,
       },
     },
   },
@@ -94,20 +94,8 @@ const workload: Workload<AzureContainerAppsRuntime> = {
       ingress: {
         hosts: ['myapp.example.com'],
         enableCors: true,
-        _aca: {
-          customDomains: [
-            {
-              name: 'myapp.example.com',
-              certificateId: '/subscriptions/.../managedCertificates/myapp-cert',
-            },
-          ],
-        },
       },
     },
-  },
-
-  _aca: {
-    workloadProfileName: 'Consumption',
   },
 }
 
