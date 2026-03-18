@@ -1,0 +1,12 @@
+# @opsen/azure
+
+## 0.2.0
+
+### Minor Changes
+
+- a8cb2c7: Add Application Gateway WAF integration with dynamic sub-resource providers. Endpoints with `_az.waf: true` are automatically routed through App Gateway with ACME TLS certificates via Key Vault. Includes AppGatewayDeployer, six dynamic providers (listener, pool, settings, rule, probe, ssl-cert) with etag-based optimistic concurrency, CertRenewalFunctionDeployer and CertRenewalJobDeployer for automated certificate renewal. All deployers extend AzureDeployer for shared provider management. App Gateway sub-resources use sequential dependsOn chains to prevent concurrent PUT failures. ACME certificate provider handles Key Vault soft-delete recovery. WAF endpoints skip direct custom domain binding (traffic routes through App Gateway). WebAppDeployer gains Application Insights support.
+- a8cb2c7: Add WebApp runtime deployer (AzureWebAppRuntimeDeployer) as a second Azure deployment option alongside Container Apps. Includes buildWebAppSpec building block, WebAppDeployer, Key Vault secret references, Azure Files storage mounts, and custom hostname binding.
+
+### Patch Changes
+
+- a8cb2c7: Move runtime-specific types from @opsen/platform to their respective packages (AzureRuntime → @opsen/azure, DockerRuntime → @opsen/docker, KubernetesRuntime → @opsen/k8s). Platform is now standalone with no knowledge of specific runtimes. Also replace `import * as azure from '@pulumi/azure-native'` with targeted submodule imports across all Azure files.

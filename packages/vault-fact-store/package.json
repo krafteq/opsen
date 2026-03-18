@@ -1,6 +1,6 @@
 {
   "name": "@opsen/vault-fact-store",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HashiCorp Vault KV v2 backend for Opsen FactStore",
   "main": "dist/index.js",
   "files": [
