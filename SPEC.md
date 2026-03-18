@@ -12,7 +12,7 @@ There is no standard way to say "here is my application, deploy it wherever make
 
 Opsen is a set of TypeScript libraries for Pulumi that separate _what_ you deploy from _where_ you deploy it.
 
-You describe your application once — its processes, ports, environment variables, health checks, volumes, and public endpoints. Then you choose a runtime deployer (Kubernetes, Docker, Azure Container Apps) and Opsen translates your description into the correct Pulumi resources for that target.
+You describe your application once — its processes, ports, environment variables, health checks, volumes, and public endpoints. Then you choose a runtime deployer (Kubernetes, Docker, Azure Container Apps, Azure Web Apps) and Opsen translates your description into the correct Pulumi resources for that target.
 
 The goal is not to hide the underlying platform. Runtime-specific tuning (K8s resource requests, Docker memory limits, ACA scaling rules) is always available via optional typed extensions. The goal is to make the common case trivial and the platform switch painless.
 
@@ -33,7 +33,7 @@ The typical Opsen user is a small-to-medium team that:
 
 **Describe, don't orchestrate.** A workload is a data structure, not a sequence of imperative steps. The runtime deployer decides how to realize it.
 
-**Runtime-specific is opt-in.** The core workload type has no mention of Kubernetes, Docker, or Azure. Each runtime adds optional fields (`_k8s`, `_docker`, `_aca`) that are fully typed but never required.
+**Runtime-specific is opt-in.** The core workload type has no mention of Kubernetes, Docker, or Azure. Each runtime adds optional fields (`_k8s`, `_docker`, `_aca`, `_az`) that are fully typed but never required.
 
 **One package per runtime.** Install only what you use. `@opsen/k8s` doesn't pull in Docker dependencies. Runtime packages never depend on each other.
 
@@ -69,7 +69,8 @@ The application model:
 - **Workload** — processes, endpoints, volumes, files, health checks, environment variables. Parameterized by a runtime type for platform-specific extensions.
 - **RuntimeDeployer** — interface that each runtime implements. Takes a Workload, returns DeployedWorkload (with resolved endpoints and process handles).
 - **WorkloadModule** — bridges RuntimeDeployer into the `@opsen/base-ops` deployer pipeline, exposing deployment results as facts.
-- **Runtime types** — `KubernetesRuntime`, `DockerRuntime`, `AzureContainerAppsRuntime`. Each defines what platform-specific fields are available.
+
+Runtime-specific types (`AzureRuntime`, `DockerRuntime`, `KubernetesRuntime`) live in their respective packages, not in platform. Platform is standalone with no knowledge of specific runtimes.
 
 ### @opsen/k8s
 
@@ -97,13 +98,25 @@ Designed for development environments and small single-server deployments.
 
 ### @opsen/azure
 
-Azure Container Apps RuntimeDeployer. For each workload:
+Azure runtime deployers and infrastructure deployers. All deployers extend `AzureDeployer` base class which manages a shared Azure Native provider and provides `options()` helper for provider injection.
 
-- Creates a separate ContainerApp per process (independent scaling)
-- Configures ACA native ingress for external endpoints (auto-TLS, custom domains)
-- Maps health checks to ACA probes
-- Supports CORS policies, registry credentials, and workload profiles
-- Mounts volumes via AzureFile or EmptyDir storage
+**Runtime deployers** (implement `RuntimeDeployer`):
+
+- `AzureRuntimeDeployer` — maps workload processes to Azure Container Apps with ACA native ingress, CORS, secret volumes, and registry credentials
+- `AzureWebAppRuntimeDeployer` — maps workload processes to Azure Web Apps for Containers with Key Vault secret references, Azure Files mounts, and Application Insights
+
+**Infrastructure deployers** (extend `AzureDeployer`):
+
+- `ContainerAppDeployer` / `WebAppDeployer` — lower-level deployers used internally by the runtime deployers
+- `AppGatewayDeployer` — Application Gateway with WAF_v2 SKU, public IP, auto-scaling
+- `CertRenewalFunctionDeployer` — Azure Function (Consumption plan) for automated ACME certificate renewal
+- `CertRenewalJobDeployer` — Container App Job alternative for certificate renewal
+
+**App Gateway WAF integration:**
+
+Endpoints with `_az.waf: true` are automatically routed through App Gateway with ACME TLS certificates via Key Vault. Six dynamic providers (listener, pool, settings, rule, probe, ssl-cert) manage App Gateway sub-resources with etag-based optimistic concurrency. Sub-resources are chained with `dependsOn` to prevent concurrent PUT failures.
+
+**Building blocks** — pure data-transform functions (`buildContainerAppSpec`, `buildWebAppSpec`, `buildAppGatewayEntries`) that can be used independently without the full deployer.
 
 ### @opsen/k8s-ops
 
@@ -120,16 +133,40 @@ Reusable Kubernetes cluster components for common infrastructure needs:
 
 Provides a `KubernetesOpsDeployer` that orchestrates these components together, built on the `@opsen/base-ops` deployer pipeline.
 
+### @opsen/cert-renewer
+
+ACME certificate renewal for Azure Key Vault + App Gateway. Discovers opsen-managed certificates in Key Vault via tags, issues/renews via Let's Encrypt DNS-01, and updates Key Vault secrets with PFX. Ships as both a CLI and a pre-built Azure Function zip artifact for zero-config deployment.
+
+### @opsen/vault-fact-store
+
+HashiCorp Vault KV v2 backend for FactStore. Stores facts as JSON in Vault secrets with path-based naming. Supports owner-scoped stale cleanup.
+
+### @opsen/azure-fact-store
+
+Azure Key Vault backend for FactStore. Stores facts as JSON in Key Vault secrets with `{owner}--{kind}--{name}` naming. Owner prefix enables scoped stale cleanup without a manifest — on write, secrets matching the owner prefix but not in the current write set are deleted.
+
+### @opsen/docker-compose
+
+SSH-based Docker Compose deployer with MirrorState file sync. Deploys Compose projects to remote hosts over SSH, syncing configuration files and managing lifecycle. Includes Pulumi dynamic providers for PostgreSQL databases, internal DNS records, and readiness checks.
+
+### @opsen/powerdns
+
+Pulumi dynamic providers for PowerDNS authoritative server and Recursor. Manages DNS zones and forward zones via the PowerDNS API.
+
+### @opsen/agent
+
+VM deploy agent — a Go binary deployed via Pulumi installer (`AgentInstaller`). Provides HTTP API endpoints for managing Docker Compose projects, Caddy ingress routes, and PostgreSQL databases/roles on target VMs. Uses mTLS authentication with client certificates. Runs as a systemd service.
+
 ## How Runtime-Specific Extensions Work
 
 The Workload type is generic over a runtime parameter. Each runtime defines optional fields at four levels:
 
-| Level    | K8s field                    | Docker field                                         | Azure field                                               |
-| -------- | ---------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
-| Workload | `_k8s.resources`             | `_docker.restart`, `memoryMb`, `cpus`                | `_aca.workloadProfileName`                                |
-| Process  | `_k8s.resources`             | `_docker.restart`, `memoryMb`, `cpus`, `networkMode` | `_aca.minReplicas`, `maxReplicas`, `cpuCores`, `memoryGi` |
-| Volume   | `_k8s.storage` (class, size) | `_docker.driver`, `driverOpts`                       | `_aca.storageType`, `storageName`                         |
-| Ingress  | `_k8s` (empty for now)       | `_docker.acmeEmail`                                  | `_aca.customDomains`                                      |
+| Level    | K8s field                    | Docker field                                         | Azure field                                                 |
+| -------- | ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------- |
+| Workload | `_k8s.resources`             | `_docker.restart`, `memoryMb`, `cpus`                | `_aca.workloadProfileName`                                  |
+| Process  | `_k8s.resources`             | `_docker.restart`, `memoryMb`, `cpus`, `networkMode` | `_aca.minReplicas`, `maxReplicas`, `cpuCores`, `memoryGi`   |
+| Volume   | `_k8s.storage` (class, size) | `_docker.driver`, `driverOpts`                       | `_aca.storageType`, `storageName`                           |
+| Ingress  | `_k8s` (empty for now)       | `_docker.acmeEmail`                                  | `_aca.customDomains`, `_az.waf` (route through App Gateway) |
 
 These fields are invisible when writing runtime-agnostic code and fully type-checked when targeting a specific runtime.
 
