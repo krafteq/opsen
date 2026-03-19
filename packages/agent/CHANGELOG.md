@@ -1,5 +1,11 @@
 # @opsen/agent
 
+## 0.1.2
+
+### Patch Changes
+
+- 5df2593: Remove compiled Go binary from published package. The agent is built on the target server from source.
+
 ## 0.1.1
 
 ### Patch Changes
