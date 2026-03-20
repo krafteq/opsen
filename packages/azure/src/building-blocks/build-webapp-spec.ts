@@ -1,5 +1,13 @@
 import * as pulumi from '@pulumi/pulumi'
-import { Workload, WorkloadProcess, WorkloadMetadata } from '@opsen/platform'
+import {
+  Workload,
+  WorkloadProcess,
+  WorkloadMetadata,
+  EnvVarValue,
+  isSecretValue,
+  isSecretRef,
+  resolveEnvValue,
+} from '@opsen/platform'
 import type { AzureRuntime } from '../runtime'
 import { WebAppSpec, WebAppStorageMount } from '../deployer/web-app'
 
@@ -35,15 +43,30 @@ export function buildWebAppSpec(
   }
 
   // Merge env from workload + process
-  const env: Record<string, string | undefined> = {
+  const rawEnv = {
     ...(wl.env ?? {}),
     ...(process.env ?? {}),
   }
 
   const appSettings: Record<string, pulumi.Input<string>> = {}
-  for (const [name, value] of Object.entries(env)) {
-    if (value !== undefined) {
+  for (const [name, value] of Object.entries(rawEnv)) {
+    if (value === undefined) continue
+    if (typeof value === 'string') {
       appSettings[name] = value
+    } else if (isSecretValue(value as EnvVarValue)) {
+      // Inline secret — extract value directly (Web App stores as app setting)
+      appSettings[name] = resolveEnvValue(value as EnvVarValue)
+    } else if (isSecretRef(value as EnvVarValue)) {
+      // SecretRef with keyvault + secret → Key Vault reference
+      const ref = (value as { type: 'secret'; valueRef: Record<string, string> }).valueRef
+      if (ref.keyvault && ref.secret) {
+        appSettings[name] =
+          `@Microsoft.KeyVault(SecretUri=https://${ref.keyvault}.vault.azure.net/secrets/${ref.secret})`
+      } else {
+        throw new Error(
+          `SecretRef for key "${name}" must have 'keyvault' and 'secret' fields for Azure Web App deployment`,
+        )
+      }
     }
   }
 

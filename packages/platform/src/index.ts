@@ -1,6 +1,7 @@
 export * from './platform'
 export * from './resource'
 export * from './workload'
+export * from './env'
 export * from './runtime'
 export * from './runtime-deployer'
 export * from './runtimes'
