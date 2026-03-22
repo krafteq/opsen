@@ -1,5 +1,15 @@
 import * as pulumi from '@pulumi/pulumi'
-import { Workload, WorkloadProcess, WorkloadMetadata, Probe } from '@opsen/platform'
+import {
+  Workload,
+  WorkloadProcess,
+  WorkloadMetadata,
+  Probe,
+  EnvVarValue,
+  isSecretValue,
+  isSecretRef,
+  isSecretContent,
+  resolveFileContent,
+} from '@opsen/platform'
 import type { AzureRuntime } from '../runtime'
 import { ContainerAppSpec, ContainerAppProbeSpec, ContainerAppVolumeSpec } from '../deployer/container-app'
 
@@ -30,13 +40,39 @@ export function buildContainerAppSpec(
     throw new Error(`No image specified for process ${processName} in ${metadata.name}`)
   }
 
-  const env: Record<string, string | undefined> = {
+  const rawEnv = {
     ...(wl.env ?? {}),
     ...(process.env ?? {}),
   }
 
+  // Partition env vars: plain → env, inline secrets → secretEnv, refs → error (ACA doesn't support arbitrary refs)
+  const env: Record<string, string | undefined> = {}
+  const secretEnv: Record<string, string> = {}
+  for (const [name, value] of Object.entries(rawEnv)) {
+    if (value === undefined) continue
+    if (typeof value === 'string') {
+      env[name] = value
+    } else if (isSecretValue(value as EnvVarValue)) {
+      secretEnv[name] = (value as { type: 'secret'; value: string }).value
+    } else if (isSecretRef(value as EnvVarValue)) {
+      // SecretRef not supported in ACA spec builder — pass through to deployer via secretEnv
+      throw new Error(`SecretRef env vars are not supported in Azure Container Apps for key "${name}"`)
+    }
+  }
+
   const cmd = process.cmd ?? wl.cmd
-  const allFiles = [...(wl.files ?? []), ...(process.files ?? [])]
+  const rawFiles = [...(wl.files ?? []), ...(process.files ?? [])]
+
+  // ACA stores all files as secrets — resolve content for plain + SecretValue, reject SecretRef
+  const allFiles = rawFiles.map((f) => {
+    if (isSecretContent(f.content) && isSecretRef(f.content as EnvVarValue)) {
+      throw new Error(`SecretRef file content is not supported in Azure Container Apps for path "${f.path}"`)
+    }
+    return {
+      path: f.path,
+      content: isSecretContent(f.content) ? resolveFileContent(f.content) : (f.content as string),
+    }
+  })
 
   const processVolumes = {
     ...(wl.volumes ?? {}),
@@ -101,6 +137,7 @@ export function buildContainerAppSpec(
     image: image as string,
     command: cmd as string[] | undefined,
     env,
+    secretEnv: Object.keys(secretEnv).length > 0 ? secretEnv : undefined,
     cpuCores: process._az?.cpu ?? 0.25,
     memoryGi: process._az?.memory ?? 0.5,
     minReplicas,

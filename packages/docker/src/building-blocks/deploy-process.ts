@@ -1,6 +1,16 @@
 import * as docker from '@pulumi/docker'
 import { input as inputs } from '@pulumi/docker/types'
-import { Workload, WorkloadProcess, WorkloadMetadata, ProcessPortProtocol } from '@opsen/platform'
+import {
+  Workload,
+  WorkloadProcess,
+  WorkloadMetadata,
+  ProcessPortProtocol,
+  EnvVarValue,
+  isSecretRef,
+  isSecretContent,
+  resolveEnvValue,
+  resolveFileContent,
+} from '@opsen/platform'
 import type { DockerRuntime } from '../runtime'
 import * as pulumi from '@pulumi/pulumi'
 
@@ -69,10 +79,17 @@ export function deployDockerProcess(
       }
     }
 
-    const uploads = allFiles.map((file) => ({
-      file: file.path,
-      content: file.content as string,
-    }))
+    const uploads = allFiles.map((file) => {
+      if (isSecretContent(file.content) && isSecretRef(file.content as EnvVarValue)) {
+        throw new Error(
+          `SecretRef file content is not supported in Docker deployer for path "${file.path}" — Docker has no native secret mechanism`,
+        )
+      }
+      return {
+        file: file.path,
+        content: isSecretContent(file.content) ? resolveFileContent(file.content) : (file.content as string),
+      }
+    })
 
     const healthcheck = process.healthcheck ?? workload.healthcheck
     let dockerHealthcheck: inputs.ContainerHealthcheck | undefined
@@ -107,7 +124,14 @@ export function deployDockerProcess(
       command: cmd as string[],
       envs: Object.entries(env)
         .filter(([, v]) => v !== undefined)
-        .map(([k, v]) => `${k}=${v}`),
+        .map(([k, v]) => {
+          if (isSecretRef(v as EnvVarValue)) {
+            throw new Error(
+              `SecretRef env vars are not supported in Docker deployer for key "${k}" — Docker has no native secret mechanism`,
+            )
+          }
+          return `${k}=${typeof v === 'string' ? v : resolveEnvValue(v as EnvVarValue)}`
+        }),
       ports: portBindings,
       volumes,
       uploads,

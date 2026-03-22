@@ -19,7 +19,7 @@ export type WorkloadProcess<TPlatform extends WorkloadRuntime = NoSpecificRuntim
         disabled?: boolean
         image?: pulumi.Input<string>
         cmd?: pulumi.Input<pulumi.Input<string>[]>
-        env?: pulumi.Input<Record<string, pulumi.Input<string | undefined>>>
+        env?: pulumi.Input<Record<string, pulumi.Input<EnvVarValue | undefined>>>
         files?: MappedFile[]
         volumes?: pulumi.Input<Record<string, pulumi.Input<Volume<TPlatform>>>>
         healthcheck?: HealthcheckOptions
@@ -54,9 +54,25 @@ export interface ProcessPort {
   protocol: ProcessPortProtocol
 }
 
+/** Secret with inline value — runtime stores using its native mechanism */
+export interface SecretValue {
+  type: 'secret'
+  value: pulumi.Input<string>
+}
+
+/** Secret referencing an external source (runtime-specific shape) */
+export interface SecretRef {
+  type: 'secret'
+  valueRef: pulumi.Input<Record<string, pulumi.Input<string>>>
+}
+
+/** Union: plain string | inline secret | external secret reference */
+export type EnvVarValue = string | SecretValue | SecretRef
+
 export interface MappedFile {
   path: string
-  content: pulumi.Input<string>
+  content: pulumi.Input<string> | SecretValue | SecretRef
+  encoding?: 'utf-8' | 'base64'
 }
 
 export interface HealthcheckOptions {

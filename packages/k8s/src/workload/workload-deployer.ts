@@ -9,6 +9,11 @@ import {
   WorkloadProcess,
   WorkloadMetadata,
   StorageClassRequest,
+  EnvVarValue,
+  isSecretValue,
+  isSecretRef,
+  isSecretContent,
+  resolveFileContent,
 } from '@opsen/platform'
 import type { KubernetesRuntime } from '../runtime'
 import * as pulumi from '@pulumi/pulumi'
@@ -227,27 +232,90 @@ export class WorkloadDeployer extends KubernetesServiceDeployer<WorkloadDeployPa
 
     const resources = process._k8s?.resources ?? workload._k8s?.resources
 
+    // Partition files into plain (ConfigMap) and secret (Secret) groups
+    const plainFiles = allFiles.filter((f) => !isSecretContent(f.content))
+    const secretFiles = allFiles.filter((f) => {
+      if (!isSecretContent(f.content)) return false
+      if (isSecretRef(f.content as EnvVarValue)) return false
+      return true
+    })
+    const secretRefFiles = allFiles.filter((f) => isSecretContent(f.content) && isSecretRef(f.content as EnvVarValue))
+
     const configMap =
-      allFiles.length > 0
+      plainFiles.length > 0
         ? new k8s.core.v1.ConfigMap(
             `${processFullName}-files`,
             {
               metadata: {
                 namespace: this.namespace,
               },
-              data: allFiles
-                .map<[string, any]>((file) => [file.path, file.content])
-                .reduce(
-                  (acc, [k, v]: [string, any]) => ({
-                    ...acc,
-                    [k.replace(/\//g, '_')]: v,
-                  }),
-                  {},
-                ),
+              data: Object.fromEntries(
+                plainFiles
+                  .filter((f) => f.encoding !== 'base64')
+                  .map((f) => [f.path.replace(/\//g, '_'), f.content as string]),
+              ),
+              binaryData: Object.fromEntries(
+                plainFiles
+                  .filter((f) => f.encoding === 'base64')
+                  .map((f) => [f.path.replace(/\//g, '_'), f.content as string]),
+              ),
             },
             this.options(),
           )
         : undefined
+
+    const secretFilesResource =
+      secretFiles.length > 0
+        ? new k8s.core.v1.Secret(
+            `${processFullName}-secret-files`,
+            {
+              metadata: {
+                namespace: this.namespace,
+              },
+              ...(secretFiles.some((f) => f.encoding === 'base64')
+                ? {
+                    data: Object.fromEntries(
+                      secretFiles
+                        .filter((f) => f.encoding === 'base64')
+                        .map((f) => [f.path.replace(/\//g, '_'), resolveFileContent(f.content)]),
+                    ),
+                  }
+                : {}),
+              stringData: Object.fromEntries(
+                secretFiles
+                  .filter((f) => f.encoding !== 'base64')
+                  .map((f) => [f.path.replace(/\//g, '_'), resolveFileContent(f.content)]),
+              ),
+            },
+            this.options(),
+          )
+        : undefined
+
+    // Partition env vars: plain, inline secrets, and secret refs
+    const plainEnvEntries = Object.entries(env).filter(([, v]) => v !== undefined && typeof v === 'string')
+    const secretEnvEntries = Object.entries(env).filter(([, v]) => v !== undefined && isSecretValue(v as EnvVarValue))
+    const secretRefEnvEntries = Object.entries(env).filter(([, v]) => v !== undefined && isSecretRef(v as EnvVarValue))
+
+    // Create K8s Secret for inline secret env vars
+    const secretEnvResource =
+      secretEnvEntries.length > 0
+        ? new k8s.core.v1.Secret(
+            `${processFullName}-secret-env`,
+            {
+              metadata: {
+                namespace: this.namespace,
+              },
+              stringData: Object.fromEntries(
+                secretEnvEntries.map(([key, v]) => [key, (v as { type: 'secret'; value: string }).value]),
+              ),
+            },
+            this.options(),
+          )
+        : undefined
+
+    const secretEnvName = secretEnvResource
+      ? secretEnvResource.id.apply((s) => s.split('/')[s.split('/').length - 1])
+      : undefined
 
     const pvcs = Object.entries(volumes).map(([pvcName, pvcRequest]) => {
       if (typeof pvcRequest._k8s?.storage == 'string')
@@ -314,8 +382,33 @@ export class WorkloadDeployer extends KubernetesServiceDeployer<WorkloadDeployPa
             ]
           : [],
       )
+      .concat(
+        secretFilesResource
+          ? [
+              {
+                name: 'secret-files',
+                secret: {
+                  secretName: secretFilesResource.id.apply((s) => s.split('/')[s.split('/').length - 1]),
+                },
+              },
+            ]
+          : [],
+      )
+      .concat(
+        secretRefFiles.map((f, i) => {
+          const ref = f.content as { type: 'secret'; valueRef: Record<string, string> }
+          return {
+            name: `secret-ref-file-${i}`,
+            secret: {
+              secretName: ref.valueRef.secretName,
+              items: ref.valueRef.key ? [{ key: ref.valueRef.key, path: f.path.split('/').pop()! }] : undefined,
+            },
+          } as k8s.types.input.core.v1.Volume
+        }),
+      )
 
-    let volumeMounts: pulumi.Input<pulumi.Input<k8s.types.input.core.v1.VolumeMount>[]> = allFiles.map(
+    // Volume mounts for plain files (ConfigMap)
+    let volumeMounts: pulumi.Input<pulumi.Input<k8s.types.input.core.v1.VolumeMount>[]> = plainFiles.map(
       (file) =>
         pulumi.output({
           name: 'config',
@@ -323,6 +416,26 @@ export class WorkloadDeployer extends KubernetesServiceDeployer<WorkloadDeployPa
           subPath: pulumi.output(file).apply((f) => f.path.replace(/\//g, '_')),
         }) as pulumi.Output<k8s.types.input.core.v1.VolumeMount>,
     )
+
+    // Volume mounts for secret files (inline Secret)
+    if (secretFiles.length > 0) {
+      const secretFileMounts = secretFiles.map((file) => ({
+        name: 'secret-files',
+        mountPath: file.path,
+        subPath: file.path.replace(/\//g, '_'),
+      }))
+      volumeMounts = pulumi.output(volumeMounts).apply((vms) => [...vms, ...secretFileMounts])
+    }
+
+    // Volume mounts for SecretRef files
+    if (secretRefFiles.length > 0) {
+      const refFileMounts = secretRefFiles.map((file, i) => ({
+        name: `secret-ref-file-${i}`,
+        mountPath: file.path,
+        subPath: file.path.split('/').pop()!,
+      }))
+      volumeMounts = pulumi.output(volumeMounts).apply((vms) => [...vms, ...refFileMounts])
+    }
 
     if (Object.entries(volumes).length > 0) {
       volumeMounts = pulumi.all([volumeMounts, volumes]).apply(([vms, pvcs]) =>
@@ -360,12 +473,33 @@ export class WorkloadDeployer extends KubernetesServiceDeployer<WorkloadDeployPa
                   image: image,
                   name: processFullName,
                   args: cmd,
-                  env: Object.entries(env)
-                    .filter((x) => x[1] !== undefined)
-                    .map(([key, value]) => ({
+                  env: [
+                    ...plainEnvEntries.map(([key, value]) => ({
                       name: key,
-                      value: value,
+                      value: value as string,
                     })),
+                    ...secretEnvEntries.map(([key]) => ({
+                      name: key,
+                      valueFrom: {
+                        secretKeyRef: {
+                          name: secretEnvName!,
+                          key,
+                        },
+                      },
+                    })),
+                    ...secretRefEnvEntries.map(([key, v]) => {
+                      const ref = v as { type: 'secret'; valueRef: Record<string, string> }
+                      return {
+                        name: key,
+                        valueFrom: {
+                          secretKeyRef: {
+                            name: ref.valueRef.secretName,
+                            key: ref.valueRef.key,
+                          },
+                        },
+                      }
+                    }),
+                  ],
                   ports: Object.entries(ports).map(([key, value]) => ({
                     name: key,
                     containerPort: value.port,
