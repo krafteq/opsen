@@ -1,5 +1,18 @@
 # @opsen/k8s
 
+## 0.2.0
+
+### Minor Changes
+
+- 98d8ae3: Add secret env vars and secret files support to the Workload type system
+
+  Introduces `SecretValue` and `SecretRef` types for env vars and file content, allowing runtimes to use their native secret mechanisms (K8s Secrets, ACA secrets, Azure Key Vault references). Plain string env vars and files continue to work unchanged.
+
+### Patch Changes
+
+- Updated dependencies [98d8ae3]
+  - @opsen/platform@0.3.0
+
 ## 0.1.2
 
 ### Patch Changes
