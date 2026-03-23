@@ -138,7 +138,7 @@ const acaDeployer = new AzureRuntimeDeployer({
   location,
 })
 
-const test1Result = acaDeployer.deploy(acaWorkload, { name: 'e2e-aca' })
+const test1Result = acaDeployer.deploy(acaWorkload, { name: 'nginx' })
 
 // ═══════════════════════════════════════════════════════════════════
 // TEST 2: ACA with custom domain via building blocks
@@ -233,13 +233,14 @@ const webappWorkload: Workload<AzureRuntime> = {
 }
 
 const webappDeployer = new AzureWebAppRuntimeDeployer({
+  name: 'e2e-webapp',
   appServicePlanId: appServicePlan.id,
   resourceGroupName,
   location,
   keyVault: { vaultUrl: kvVaultUrl },
 })
 
-const test3Result = webappDeployer.deploy(webappWorkload, { name: 'e2e-webapp' })
+const test3Result = webappDeployer.deploy(webappWorkload, { name: 'nginx' })
 
 // ═══════════════════════════════════════════════════════════════════
 // TEST 4: WebApp with custom domain + storage mount via building blocks

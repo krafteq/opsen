@@ -113,6 +113,26 @@ describe('buildContainerAppSpec', () => {
     expect(spec.image).toBe('worker:v2')
   })
 
+  it('uses custom name when provided in options', () => {
+    const workload = {
+      image: 'myapp:latest',
+      processes: {
+        web: {
+          ports: { http: { port: 3000, protocol: 'http' as const } },
+        },
+      },
+    }
+
+    const metadata = { name: 'myapp' }
+    const process = workload.processes.web as any
+
+    const spec = buildContainerAppSpec(workload as any, metadata, 'web', process, {
+      name: 'cookie-consent-myapp-web',
+    })
+
+    expect(spec.name).toBe('cookie-consent-myapp-web')
+  })
+
   it('throws when no image specified', () => {
     const workload = {
       processes: {
