@@ -1,5 +1,13 @@
 # @opsen/k8s-ops
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [98d8ae3]
+  - @opsen/platform@0.3.0
+  - @opsen/k8s@0.2.0
+
 ## 0.1.1
 
 ### Patch Changes
