@@ -140,13 +140,16 @@ export class DockerCompose extends pulumi.ComponentResource {
       },
     )
 
-    // Compose up
+    // Compose up — delete is a no-op because triggers cause REPLACEMENT and
+    // deleteBeforeReplace runs delete on every file change. compose down would
+    // kill ALL containers (including unchanged ones). docker compose up
+    // --remove-orphans handles the full lifecycle instead.
     const composeUp = new command.remote.Command(
       `${name}-compose-up`,
       {
         connection,
-        create: pulumi.interpolate`cd ${composePath} && docker compose up -d --wait --build`,
-        delete: pulumi.interpolate`cd ${composePath} && docker compose down || true`,
+        create: pulumi.interpolate`cd ${composePath} && docker compose up -d --wait --build --remove-orphans`,
+        delete: "echo 'compose lifecycle managed by docker compose up'",
         triggers: [mirrorFiles],
       },
       { parent: this, dependsOn: [mirror], deleteBeforeReplace: true },

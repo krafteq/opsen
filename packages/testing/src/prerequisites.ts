@@ -33,3 +33,17 @@ export function isAzureAvailable(subscriptionId?: string): boolean {
 export function isKubernetesAvailable(): boolean {
   return commandSucceeds('kubectl cluster-info')
 }
+
+export function isHetznerAvailable(): boolean {
+  if (!process.env.HETZNER_API_TOKEN) return false
+  try {
+    execSync('hcloud server list', {
+      stdio: 'pipe',
+      timeout: 15_000,
+      env: { ...process.env, HCLOUD_TOKEN: process.env.HETZNER_API_TOKEN },
+    })
+    return true
+  } catch {
+    return false
+  }
+}

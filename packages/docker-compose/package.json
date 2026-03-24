@@ -18,6 +18,7 @@
     "ssh2": "^1.16.0"
   },
   "devDependencies": {
+    "@opsen/testing": "workspace:^",
     "@tsconfig/node22": "^22.0.0",
     "@types/ssh2": "^1.15.5",
     "typescript": "^5.7.3"
