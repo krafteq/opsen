@@ -104,6 +104,11 @@ The root `tsconfig.json` uses TypeScript project references (`composite: true`).
 - TypeScript strict mode with all strict flags enabled
 - Tests use **Vitest** with globals enabled; unit tests are `*.test.ts`, e2e tests are `*.e2e.test.ts`
 
+## Security
+
+- **No shell command injection** — never interpolate variables into `execSync()` strings. Use `execFileSync(cmd, args[])` with argument arrays instead. This applies to all CLI wrappers (`az`, `hcloud`, `docker`, `ssh`, `kubectl`, etc.) in `@opsen/testing` and e2e tests.
+- **No secrets in code** — API tokens, passwords, and private keys must come from environment variables or files, never hardcoded.
+
 ## Git Hooks (Husky)
 
 - **pre-commit** — `pnpm lint-staged` (eslint --fix + prettier on staged files) AND `pnpm ts:check`

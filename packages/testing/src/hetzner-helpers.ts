@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -19,8 +19,8 @@ export interface HetznerTestVm {
   destroy: () => void
 }
 
-function hcloud(cmd: string, timeout = 60_000): string {
-  return execSync(`hcloud ${cmd}`, {
+function hcloud(args: string[], timeout = 60_000): string {
+  return execFileSync('hcloud', args, {
     stdio: 'pipe',
     timeout,
     env: { ...process.env, HCLOUD_TOKEN: process.env.HETZNER_API_TOKEN },
@@ -66,35 +66,60 @@ runcmd:
 `
 
   console.log(`[hetzner-helpers] Creating SSH key: ${sshKeyName}`)
-  hcloud(`ssh-key create --name ${sshKeyName} --public-key "${sshPubKey}"`)
+  hcloud(['ssh-key', 'create', '--name', sshKeyName, '--public-key', sshPubKey])
 
   console.log(`[hetzner-helpers] Creating server: ${serverName} (${serverType} in ${location})`)
   const cloudInitFile = join(tmpdir(), `opsen-e2e-cloud-init-${testId}.yaml`)
   writeFileSync(cloudInitFile, cloudInit)
   try {
     hcloud(
-      `server create --name ${serverName} --type ${serverType} --image ubuntu-24.04 --location ${location} --ssh-key ${sshKeyName} --user-data-from-file ${cloudInitFile}`,
+      [
+        'server',
+        'create',
+        '--name',
+        serverName,
+        '--type',
+        serverType,
+        '--image',
+        'ubuntu-24.04',
+        '--location',
+        location,
+        '--ssh-key',
+        sshKeyName,
+        '--user-data-from-file',
+        cloudInitFile,
+      ],
       120_000,
     )
   } finally {
     unlinkSync(cloudInitFile)
   }
 
-  const ipv4 = hcloud(`server ip ${serverName}`)
+  const ipv4 = hcloud(['server', 'ip', serverName])
   console.log(`[hetzner-helpers] Server ready: ${serverName} (${ipv4})`)
 
   // Wait for cloud-init to finish (Docker installed)
   console.log('[hetzner-helpers] Waiting for cloud-init (Docker install)...')
+  const sshArgs = [
+    '-o',
+    'StrictHostKeyChecking=no',
+    '-o',
+    'ConnectTimeout=5',
+    '-o',
+    'UserKnownHostsFile=/dev/null',
+    '-i',
+    join(process.env.HOME!, '.ssh', 'id_ed25519'),
+  ]
   const deadline = Date.now() + 300_000
   while (Date.now() < deadline) {
     try {
-      execSync(
-        `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_ed25519 root@${ipv4} '[ -f /tmp/cloud-init-done ]'`,
-        { stdio: 'pipe', timeout: 15_000 },
-      )
+      execFileSync('ssh', [...sshArgs, `root@${ipv4}`, '[ -f /tmp/cloud-init-done ]'], {
+        stdio: 'pipe',
+        timeout: 15_000,
+      })
       break
     } catch {
-      execSync('sleep 5', { stdio: 'pipe' })
+      execFileSync('sleep', ['5'], { stdio: 'pipe' })
     }
   }
   if (Date.now() >= deadline) {
@@ -120,13 +145,13 @@ runcmd:
 export function destroyHetznerTestVm(serverName: string, sshKeyName?: string): void {
   try {
     console.log(`[hetzner-helpers] Deleting server: ${serverName}`)
-    hcloud(`server delete ${serverName}`)
+    hcloud(['server', 'delete', serverName])
   } catch (err) {
     console.error(`[hetzner-helpers] Failed to delete server ${serverName}:`, err)
   }
   if (sshKeyName) {
     try {
-      hcloud(`ssh-key delete ${sshKeyName}`)
+      hcloud(['ssh-key', 'delete', sshKeyName])
     } catch {
       // ignore
     }

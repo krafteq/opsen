@@ -1,10 +1,10 @@
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 
 /**
  * Assert that a Docker container with the given name prefix is running.
  */
 export function assertDockerContainerRunning(namePrefix: string): void {
-  const output = execSync(`docker ps --filter name=${namePrefix} --format '{{.Names}}'`, {
+  const output = execFileSync('docker', ['ps', '--filter', `name=${namePrefix}`, '--format', '{{.Names}}'], {
     stdio: 'pipe',
     timeout: 10_000,
   })
@@ -21,7 +21,7 @@ export function assertDockerContainerRunning(namePrefix: string): void {
  */
 export function assertDockerNetworkExists(name: string): void {
   try {
-    execSync(`docker network inspect ${name}`, { stdio: 'pipe', timeout: 10_000 })
+    execFileSync('docker', ['network', 'inspect', name], { stdio: 'pipe', timeout: 10_000 })
   } catch {
     throw new Error(`Docker network not found: ${name}`)
   }

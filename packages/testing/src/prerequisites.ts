@@ -1,8 +1,8 @@
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 
-function commandSucceeds(cmd: string): boolean {
+function commandSucceeds(cmd: string, args: string[] = [], env?: NodeJS.ProcessEnv): boolean {
   try {
-    execSync(cmd, { stdio: 'pipe', timeout: 15_000 })
+    execFileSync(cmd, args, { stdio: 'pipe', timeout: 15_000, env })
     return true
   } catch {
     return false
@@ -10,18 +10,21 @@ function commandSucceeds(cmd: string): boolean {
 }
 
 export function isPulumiAvailable(): boolean {
-  return commandSucceeds('pulumi version')
+  return commandSucceeds('pulumi', ['version'])
 }
 
 export function isDockerAvailable(): boolean {
-  return commandSucceeds('docker info')
+  return commandSucceeds('docker', ['info'])
 }
 
 export function isAzureAvailable(subscriptionId?: string): boolean {
-  if (!commandSucceeds('az account show')) return false
+  if (!commandSucceeds('az', ['account', 'show'])) return false
   if (subscriptionId) {
     try {
-      const out = execSync('az account show --query id -o tsv', { stdio: 'pipe', timeout: 15_000 })
+      const out = execFileSync('az', ['account', 'show', '--query', 'id', '-o', 'tsv'], {
+        stdio: 'pipe',
+        timeout: 15_000,
+      })
       return out.toString().trim() === subscriptionId
     } catch {
       return false
@@ -31,19 +34,13 @@ export function isAzureAvailable(subscriptionId?: string): boolean {
 }
 
 export function isKubernetesAvailable(): boolean {
-  return commandSucceeds('kubectl cluster-info')
+  return commandSucceeds('kubectl', ['cluster-info'])
 }
 
 export function isHetznerAvailable(): boolean {
   if (!process.env.HETZNER_API_TOKEN) return false
-  try {
-    execSync('hcloud server list', {
-      stdio: 'pipe',
-      timeout: 15_000,
-      env: { ...process.env, HCLOUD_TOKEN: process.env.HETZNER_API_TOKEN },
-    })
-    return true
-  } catch {
-    return false
-  }
+  return commandSucceeds('hcloud', ['server', 'list'], {
+    ...process.env,
+    HCLOUD_TOKEN: process.env.HETZNER_API_TOKEN,
+  })
 }

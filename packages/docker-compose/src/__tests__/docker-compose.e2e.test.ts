@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
+import { join } from 'node:path'
 import { isPulumiAvailable, isHetznerAvailable, createHetznerTestVm } from '@opsen/testing'
 import type { HetznerTestVm } from '@opsen/testing'
 
@@ -16,18 +17,27 @@ afterAll(() => {
   vm?.destroy()
 }, 120_000)
 
+const sshBaseArgs = [
+  '-o',
+  'StrictHostKeyChecking=no',
+  '-o',
+  'UserKnownHostsFile=/dev/null',
+  '-i',
+  join(process.env.HOME!, '.ssh', 'id_ed25519'),
+]
+
 function ssh(cmd: string): string {
-  return execSync(
-    `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_ed25519 root@${vm!.ipv4} '${cmd}'`,
-    { stdio: 'pipe', timeout: 60_000 },
-  )
+  return execFileSync('ssh', [...sshBaseArgs, `root@${vm!.ipv4}`, cmd], {
+    stdio: 'pipe',
+    timeout: 60_000,
+  })
     .toString()
     .trim()
 }
 
 /** Write a compose file and run the same command DockerCompose uses */
 function composeUp(composeYaml: string): void {
-  ssh(`mkdir -p /opt/e2e-test`)
+  ssh('mkdir -p /opt/e2e-test')
   ssh(`cat > /opt/e2e-test/docker-compose.yml << 'YAML'\n${composeYaml}\nYAML`)
   ssh('cd /opt/e2e-test && docker compose up -d --wait --build --remove-orphans')
 }
