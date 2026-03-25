@@ -1,6 +1,6 @@
 {
   "name": "@opsen/azure",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Azure Container Apps runtime deployer for Opsen platform",
   "main": "src/index.ts",
   "files": [
