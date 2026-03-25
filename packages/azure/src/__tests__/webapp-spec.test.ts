@@ -183,6 +183,27 @@ describe('buildWebAppSpec', () => {
     )
   })
 
+  it('uses custom name when provided in options', () => {
+    const workload = {
+      image: 'myapp:latest',
+      processes: {
+        web: {
+          ports: { http: { port: 3000, protocol: 'http' as const } },
+        },
+      },
+    }
+
+    const metadata = { name: 'myapp' }
+    const process = workload.processes.web as any
+
+    const spec = buildWebAppSpec(workload as any, metadata, 'web', process, {
+      ...defaultOptions,
+      name: 'cookie-consent-myapp-web',
+    })
+
+    expect(spec.name).toBe('cookie-consent-myapp-web')
+  })
+
   it('ignores endpoints targeting other processes', () => {
     const workload = {
       image: 'myapp:latest',

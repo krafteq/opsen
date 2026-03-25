@@ -15,6 +15,7 @@ import {
   AppGatewayHttpListener,
   AppGatewayRoutingRule,
 } from './app-gateway/providers'
+import { AzureNaming, defaultAzureNaming } from './naming'
 
 export interface AppGatewayAcmeConfig {
   email: string
@@ -47,6 +48,8 @@ export interface AzureRuntimeDeployerArgs {
   acme?: AppGatewayAcmeConfig
   /** Azure connection for dynamic providers (required when appGateway is set) */
   connection?: pulumi.Input<AzureConnection>
+  /** Custom naming convention for Azure resources. Defaults to `${deployerName}-${workloadName}-${processName}`. */
+  naming?: AzureNaming
 }
 
 /**
@@ -61,6 +64,7 @@ export class AzureRuntimeDeployer implements RuntimeDeployer<AzureRuntime> {
   private deployer: ContainerAppDeployer
   private storageAccount?: AzureRuntimeDeployerArgs['storageAccount']
   private workloadProfileName?: string
+  private naming: AzureNaming
 
   constructor(args: AzureRuntimeDeployerArgs) {
     this.args = args
@@ -73,6 +77,7 @@ export class AzureRuntimeDeployer implements RuntimeDeployer<AzureRuntime> {
     })
     this.storageAccount = args.storageAccount
     this.workloadProfileName = args.workloadProfileName
+    this.naming = args.naming ?? defaultAzureNaming()
   }
 
   deploy(workload: Workload<AzureRuntime>, metadata: WorkloadMetadata): pulumi.Output<DeployedWorkload> {
@@ -84,10 +89,15 @@ export class AzureRuntimeDeployer implements RuntimeDeployer<AzureRuntime> {
       for (const [processName, process] of Object.entries(wl.processes ?? {})) {
         if (process.disabled) continue
 
-        const appName = `${metadata.name}-${processName}`
+        const appName = this.naming.resourceName({
+          deployerName: this.args.name,
+          workloadName: metadata.name,
+          processName,
+        })
         const spec = buildContainerAppSpec(wl, metadata, processName, process, {
           storageName: this.storageAccount?.name,
           workloadProfileName: this.workloadProfileName,
+          name: appName,
         })
         const deployed = this.deployer.deploy(spec)
         processes[processName] = {}
@@ -97,6 +107,7 @@ export class AzureRuntimeDeployer implements RuntimeDeployer<AzureRuntime> {
           const gwEntries = buildAppGatewayEntries(wl, metadata, processName, process, {
             backendFqdn: '__placeholder__',
             basePriority: this.args.appGatewayBasePriority,
+            resourceName: appName,
           })
           for (const entry of gwEntries) {
             // ACA backends always use HTTPS/443 (App GW → *.azurecontainerapps.io)

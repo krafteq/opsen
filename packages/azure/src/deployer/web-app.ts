@@ -45,6 +45,8 @@ export interface WebAppStorageMount {
 export interface DeployedWebApp {
   app: web.WebApp
   defaultHostname: pulumi.Output<string>
+  storageAccounts?: web.WebAppAzureStorageAccounts
+  hostnameBindings: web.WebAppHostNameBinding[]
 }
 
 /**
@@ -114,6 +116,7 @@ export class WebAppDeployer extends AzureDeployer<WebAppDeployParams> {
     )
 
     // Storage mounts via separate resource
+    let storageAccounts: web.WebAppAzureStorageAccounts | undefined
     if (spec.storageMounts && spec.storageMounts.length > 0) {
       const storageProperties: Record<string, pulumi.Input<inputs.web.AzureStorageInfoValueArgs>> = {}
       for (const mount of spec.storageMounts) {
@@ -126,7 +129,7 @@ export class WebAppDeployer extends AzureDeployer<WebAppDeployParams> {
         }
       }
 
-      new web.WebAppAzureStorageAccounts(
+      storageAccounts = new web.WebAppAzureStorageAccounts(
         `${spec.name}-storage`,
         {
           name: appResource.name,
@@ -138,21 +141,24 @@ export class WebAppDeployer extends AzureDeployer<WebAppDeployParams> {
     }
 
     // Bind custom hostnames
+    const hostnameBindings: web.WebAppHostNameBinding[] = []
     for (const hostname of spec.customHostnames ?? []) {
-      new web.WebAppHostNameBinding(
-        `${spec.name}-${hostname.replace(/\./g, '-')}`,
-        {
-          name: appResource.name,
-          resourceGroupName: this.resourceGroupName,
-          hostName: hostname,
-        },
-        this.options({ parent: appResource }),
+      hostnameBindings.push(
+        new web.WebAppHostNameBinding(
+          `${spec.name}-${hostname.replace(/\./g, '-')}`,
+          {
+            name: appResource.name,
+            resourceGroupName: this.resourceGroupName,
+            hostName: hostname,
+          },
+          this.options({ parent: appResource }),
+        ),
       )
     }
 
     const defaultHostname = appResource.defaultHostName.apply((h) => h ?? '')
 
-    return { app: appResource, defaultHostname }
+    return { app: appResource, defaultHostname, storageAccounts, hostnameBindings }
   }
 }
 

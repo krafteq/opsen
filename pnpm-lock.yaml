@@ -93,6 +93,9 @@ importers:
       '@tsconfig/node22':
         specifier: ^22.0.0
         version: 22.0.5
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
@@ -279,6 +282,9 @@ importers:
         specifier: ^1.16.0
         version: 1.17.0
     devDependencies:
+      '@opsen/testing':
+        specifier: workspace:^
+        version: link:../testing
       '@tsconfig/node22':
         specifier: ^22.0.0
         version: 22.0.5

@@ -226,6 +226,37 @@ describe('buildAppGatewayEntries', () => {
     expect(entries[0].backendPort).toBe(9090)
   })
 
+  it('uses custom resourceName in namePrefix when provided', () => {
+    const workload = {
+      image: 'myapp:latest',
+      processes: {
+        web: {
+          ports: { http: { port: 8080, protocol: 'http' as const } },
+        },
+      },
+      endpoints: {
+        public: {
+          backend: { process: 'web', port: 'http' },
+          ingress: {
+            hosts: ['app.example.com'],
+            _az: { waf: true },
+          },
+        },
+      },
+    }
+
+    const metadata = { name: 'myapp' }
+    const process = workload.processes.web as any
+
+    const entries = buildAppGatewayEntries(workload as any, metadata, 'web', process, {
+      backendFqdn: 'backend.fqdn',
+      resourceName: 'cookie-consent-myapp-web',
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].namePrefix).toBe('cookie-consent-myapp-web-public')
+  })
+
   it('skips WAF endpoints without hosts', () => {
     const workload = {
       image: 'myapp:latest',

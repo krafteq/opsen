@@ -7,6 +7,7 @@ import { buildWebAppSpec } from './building-blocks/build-webapp-spec'
 import { buildAppGatewayEntries } from './building-blocks/build-app-gateway-entries'
 import { AppGatewayRef, AzureConnection } from './app-gateway'
 import { AppGatewayAcmeConfig } from './runtime-deployer'
+import { AzureNaming, defaultAzureNaming } from './naming'
 import {
   AcmeCertificate,
   AppGatewaySslCertificate,
@@ -47,6 +48,8 @@ export interface AzureWebAppDeployerArgs {
   acme?: AppGatewayAcmeConfig
   /** Azure connection for dynamic providers (required when appGateway is set) */
   connection?: pulumi.Input<AzureConnection>
+  /** Custom naming convention for Azure resources. Defaults to `${deployerName}-${workloadName}-${processName}`. */
+  naming?: AzureNaming
 }
 
 /**
@@ -60,6 +63,7 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
   private deployer: WebAppDeployer
   private storageAccount?: AzureWebAppDeployerArgs['storageAccount']
   private kvVaultUrl: string
+  private naming: AzureNaming
 
   constructor(args: AzureWebAppDeployerArgs) {
     this.args = args
@@ -75,6 +79,7 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
     })
     this.storageAccount = args.storageAccount
     this.kvVaultUrl = args.keyVault.vaultUrl
+    this.naming = args.naming ?? defaultAzureNaming()
   }
 
   deploy(workload: Workload<AzureRuntime>, metadata: WorkloadMetadata): pulumi.Output<DeployedWorkload> {
@@ -85,9 +90,15 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
       for (const [processName, process] of Object.entries(wl.processes ?? {})) {
         if (process.disabled) continue
 
+        const appName = this.naming.resourceName({
+          deployerName: this.args.name,
+          workloadName: metadata.name,
+          processName,
+        })
         const spec = buildWebAppSpec(wl, metadata, processName, process, {
           kvVaultUrl: this.kvVaultUrl,
           storageAccount: this.storageAccount,
+          name: appName,
         })
         const deployed = this.deployer.deploy(spec)
         processes[processName] = {}
@@ -97,6 +108,7 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
           const gwEntries = buildAppGatewayEntries(wl, metadata, processName, process, {
             backendFqdn: '__placeholder__',
             basePriority: this.args.appGatewayBasePriority,
+            resourceName: appName,
           })
           for (const entry of gwEntries) {
             // Web App backends always use HTTPS/443 (App GW → *.azurewebsites.net)
@@ -126,7 +138,7 @@ export class AzureWebAppRuntimeDeployer implements RuntimeDeployer<AzureRuntime>
             }
           } else {
             endpointOutputs[endpointName] = deployed.defaultHostname.apply((hostname) => ({
-              host: hostname || `${metadata.name}-${processName}.azurewebsites.net`,
+              host: hostname || `${appName}.azurewebsites.net`,
               port,
             }))
           }

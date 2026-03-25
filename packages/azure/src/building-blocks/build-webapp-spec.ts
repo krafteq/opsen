@@ -16,6 +16,8 @@ export interface BuildWebAppSpecOptions {
   kvVaultUrl: string
   /** Storage account for Azure Files mounts (persistent volumes + files) */
   storageAccount?: { name: string; key: pulumi.Input<string>; shareName: string }
+  /** Override the resource name. Defaults to `${metadata.name}-${processName}`. */
+  name?: string
 }
 
 /**
@@ -35,7 +37,7 @@ export function buildWebAppSpec(
   process: pulumi.Unwrap<WorkloadProcess<AzureRuntime>>,
   options: BuildWebAppSpecOptions,
 ): WebAppSpec {
-  const appName = `${metadata.name}-${processName}`
+  const appName = options.name ?? `${metadata.name}-${processName}`
 
   const image = process.image ?? wl.image
   if (!image) {

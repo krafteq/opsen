@@ -32,6 +32,8 @@ export interface BuildAppGatewayEntriesOptions {
   backendFqdn: string
   /** Starting priority number for routing rules (default 100) */
   basePriority?: number
+  /** Override the resource name used in namePrefix. Defaults to `${metadata.name}-${processName}`. */
+  resourceName?: string
 }
 
 /**
@@ -61,7 +63,8 @@ export function buildAppGatewayEntries(
     if (hosts.length === 0) continue
 
     const hostName = hosts[0]
-    const namePrefix = `${metadata.name}-${processName}-${endpointName}`
+    const baseName = options.resourceName ?? `${metadata.name}-${processName}`
+    const namePrefix = `${baseName}-${endpointName}`
 
     const backendPort = process.ports?.[endpoint.backend.port]
     const port = endpoint.servicePort ?? backendPort?.port ?? 443

@@ -18,6 +18,8 @@ export interface BuildContainerAppSpecOptions {
   storageName?: string
   /** Workload profile name for Container Apps */
   workloadProfileName?: string
+  /** Override the resource name. Defaults to `${metadata.name}-${processName}`. */
+  name?: string
 }
 
 /**
@@ -33,7 +35,7 @@ export function buildContainerAppSpec(
   process: pulumi.Unwrap<WorkloadProcess<AzureRuntime>>,
   options?: BuildContainerAppSpecOptions,
 ): ContainerAppSpec {
-  const appName = `${metadata.name}-${processName}`
+  const appName = options?.name ?? `${metadata.name}-${processName}`
 
   const image = process.image ?? wl.image
   if (!image) {

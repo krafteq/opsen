@@ -18,7 +18,7 @@ export interface AzureDeployParams {
   }
 }
 
-if (!global.AZURE_PROVIDERS_LOOKUP) global.AZURE_PROVIDERS_LOOKUP = {}
+if (!globalThis.AZURE_PROVIDERS_LOOKUP) globalThis.AZURE_PROVIDERS_LOOKUP = {}
 
 /**
  * Base class for Azure deployers.
