@@ -70,6 +70,37 @@ describe('VaultFactStore', () => {
       expect(config.facts.map((f) => f.kind).sort()).toEqual(['cluster', 'database'])
     })
 
+    it('reads only from specified owners when owners option is set', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'owner-a') return ['cluster/']
+        if (path === 'owner-b') return ['database/']
+        if (path === 'owner-a/cluster') return ['prod']
+        if (path === 'owner-b/database') return ['main']
+        return ['owner-a/', 'owner-b/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'owner-a/cluster/prod') return makeFact('cluster', 'prod', 'owner-a')
+        if (path === 'owner-b/database/main') return makeFact('database', 'main', 'owner-b')
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok', owners: ['owner-a'] })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(config.facts[0]).toEqual(expect.objectContaining({ kind: 'cluster', owner: 'owner-a' }))
+      expect(mockClient.list).not.toHaveBeenCalledWith('owner-b')
+    })
+
+    it('returns empty facts when owners list is empty', async () => {
+      mockClient.list.mockResolvedValue(['owner-a/'])
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok', owners: [] })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(0)
+    })
+
     it('skips null results from get', async () => {
       mockClient.list.mockImplementation(async (path: string) => {
         if (path === 'my-stack') return ['cluster/']
@@ -91,6 +122,85 @@ describe('VaultFactStore', () => {
       const config = await store.read()
 
       expect(config.facts).toHaveLength(0)
+    })
+
+    it('skips owners whose kind listing fails', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'bad-owner') throw new Error('Vault LIST bad-owner: 500 Internal Server Error')
+        if (path === 'good-owner') return ['cluster/']
+        if (path === 'good-owner/cluster') return ['prod']
+        return ['bad-owner/', 'good-owner/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'good-owner/cluster/prod') return makeFact('cluster', 'prod', 'good-owner')
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(config.facts[0]).toEqual(expect.objectContaining({ kind: 'cluster' }))
+    })
+
+    it('skips kinds whose name listing fails', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'owner') return ['good/', 'bad/']
+        if (path === 'owner/good') return ['prod']
+        if (path === 'owner/bad') throw new Error('Vault LIST owner/bad: 500 Internal Server Error')
+        return ['owner/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'owner/good/prod') return makeFact('good', 'prod', 'owner')
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+    })
+
+    it('skips individual secrets that fail to read', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'owner') return ['cluster/']
+        if (path === 'owner/cluster') return ['ok', 'broken']
+        return ['owner/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'owner/cluster/ok') return makeFact('cluster', 'ok', 'owner')
+        if (path === 'owner/cluster/broken')
+          throw new Error('Vault GET owner/cluster/broken: 500 Internal Server Error')
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(config.facts[0]).toEqual(expect.objectContaining({ metadata: { name: 'ok' } }))
+    })
+
+    it('skips simple secrets with non-string value', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'owner') return ['secret/']
+        if (path === 'owner/secret') return ['good', 'no-value', 'object-value']
+        return ['owner/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'owner/secret/good') return { value: 'hunter2' }
+        if (path === 'owner/secret/no-value') return { something: 'else' }
+        if (path === 'owner/secret/object-value') return { value: { nested: true } }
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(config.facts[0]).toEqual(
+        expect.objectContaining({ kind: 'secret', metadata: { name: 'good' }, spec: { value: 'hunter2' } }),
+      )
     })
 
     it('reads with basePath prefix when configured', async () => {
