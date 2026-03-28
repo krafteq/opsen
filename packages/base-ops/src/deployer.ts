@@ -89,7 +89,7 @@ export abstract class InfrastructureDeployer<
 
     return result.apply(() => {
       return pulumi.all(exposedFacts).apply((x) => {
-        this.discoveredFacts.push(...x)
+        this.discoveredFacts.push(...x.map((f) => (f.owner ? f : { ...f, owner: this.owner })))
         this._facts = this.rebuildFacts(currentFacts)
         return pulumi.secret({
           facts: [...this.discoveredFacts],
