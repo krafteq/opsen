@@ -16,4 +16,7 @@ export interface VaultFactStoreOptions {
 
   /** Whether to delete stale facts owned by the current owner (default: true) */
   cleanupStale?: boolean
+
+  /** Limit read to these owners only (default: all owners) */
+  owners?: string[]
 }

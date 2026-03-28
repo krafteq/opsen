@@ -9,6 +9,7 @@ export class VaultFactStore implements FactStoreReader, FactStoreWriter {
   private readonly basePath: string | undefined
   private readonly cleanupStale: boolean
   private readonly owner: string | undefined
+  private readonly owners: Set<string> | undefined
 
   constructor(options: VaultFactStoreOptions, owner?: string) {
     if (owner) validatePathSegment('Owner', owner)
@@ -21,6 +22,7 @@ export class VaultFactStore implements FactStoreReader, FactStoreWriter {
     })
     this.basePath = options.basePath
     this.cleanupStale = options.cleanupStale ?? true
+    this.owners = options.owners ? new Set(options.owners) : undefined
     this.owner = owner
   }
 
@@ -30,26 +32,50 @@ export class VaultFactStore implements FactStoreReader, FactStoreWriter {
 
     for (const ownerKey of owners) {
       const owner = ownerKey.replace(/\/$/, '')
-      const kinds = await this.client.list(joinPath(this.basePath, owner))
+      if (this.owners && !this.owners.has(owner)) continue
+
+      let kinds: string[]
+      try {
+        kinds = await this.client.list(joinPath(this.basePath, owner))
+      } catch {
+        continue
+      }
 
       for (const kindKey of kinds) {
         const kind = kindKey.replace(/\/$/, '')
-        const names = await this.client.list(joinPath(this.basePath, owner, kind))
+
+        let names: string[]
+        try {
+          names = await this.client.list(joinPath(this.basePath, owner, kind))
+        } catch {
+          continue
+        }
 
         const fetches = names.map(async (nameKey) => {
           const name = nameKey.replace(/\/$/, '')
-          const data = await this.client.get(joinPath(this.basePath, owner, kind, name))
+
+          let data: Record<string, unknown> | null
+          try {
+            data = await this.client.get(joinPath(this.basePath, owner, kind, name))
+          } catch {
+            return
+          }
           if (!data) return
 
           if (kind === SIMPLE_SECRET_KIND) {
-            facts.push({
-              kind: SIMPLE_SECRET_KIND,
-              metadata: { name },
-              spec: { value: (data as Record<string, unknown>).value as string },
-              owner,
-            })
+            const value = data.value
+            if (typeof value === 'string') {
+              facts.push({
+                kind: SIMPLE_SECRET_KIND,
+                metadata: { name },
+                spec: { value },
+                owner,
+              })
+            }
           } else {
-            facts.push(data as unknown as InfrastructureFact)
+            if (data.kind && data.metadata && typeof (data.metadata as Record<string, unknown>).name === 'string') {
+              facts.push(data as unknown as InfrastructureFact)
+            }
           }
         })
         await Promise.all(fetches)
