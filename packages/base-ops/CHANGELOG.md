@@ -1,5 +1,11 @@
 # @opsen/base-ops
 
+## 0.2.2
+
+### Patch Changes
+
+- 8a889b3: Fix exposed facts losing their owner after Pulumi output resolution by applying default owner at resolution time.
+
 ## 0.2.1
 
 ### Patch Changes
