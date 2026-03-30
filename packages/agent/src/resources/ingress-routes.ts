@@ -6,6 +6,7 @@ interface IngressRoute {
   domain: string
   path?: string
   upstream: string
+  bind?: string
   tls?: {
     acme?: boolean
     cert?: string
@@ -28,6 +29,7 @@ function toApiRoute(route: IngressRoute) {
     hosts: [route.domain],
     upstream: route.upstream,
     path_prefix: route.path,
+    bind_address: route.bind,
     tls: route.tls,
     headers: route.headers,
     rate_limit_rps: route.rateLimit,
@@ -86,6 +88,8 @@ export interface IngressRouteArgs {
   domain: pulumi.Input<string>
   path?: pulumi.Input<string>
   upstream: pulumi.Input<string>
+  /** Bind route to specific IP address (e.g. internal-only routes) */
+  bind?: pulumi.Input<string>
   tls?: pulumi.Input<{
     acme?: pulumi.Input<boolean>
     cert?: pulumi.Input<string>
