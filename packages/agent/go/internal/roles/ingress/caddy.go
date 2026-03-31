@@ -24,6 +24,11 @@ func (d *CaddyDriver) WriteConfig(clientName string, routes []Route) error {
 		for _, host := range route.Hosts {
 			lines = append(lines, fmt.Sprintf("%s {", host))
 
+			// Bind to specific address (for internal-only routes)
+			if route.BindAddress != "" {
+				lines = append(lines, fmt.Sprintf("  bind %s", route.BindAddress))
+			}
+
 			// Security headers
 			lines = append(lines, "  header {")
 			lines = append(lines, "    Strict-Transport-Security \"max-age=31536000; includeSubDomains\"")

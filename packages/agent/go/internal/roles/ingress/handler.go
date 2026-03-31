@@ -39,6 +39,7 @@ type Route struct {
 	Hosts        []string          `json:"hosts"`
 	Upstream     string            `json:"upstream"`
 	PathPrefix   string            `json:"path_prefix,omitempty"`
+	BindAddress  string            `json:"bind_address,omitempty"`
 	TLS          *RouteTLS         `json:"tls,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 	CORS         *CORSConfig       `json:"cors,omitempty"`
