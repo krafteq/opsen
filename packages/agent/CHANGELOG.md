@@ -1,5 +1,13 @@
 # @opsen/agent
 
+## 0.2.2
+
+### Patch Changes
+
+- 33d4889: Fix AgentInstaller failing in Pulumi preview (plan) mode when binary has not been built yet by creating an empty placeholder file for FileAsset hash computation.
+
+  Fix docker-compose MirrorState dynamic provider to use lazy `require()` imports, avoiding Pulumi closure serialization failures with pnpm store paths.
+
 ## 0.2.1
 
 ### Patch Changes
