@@ -1,5 +1,18 @@
 # @opsen/k8s
 
+## 0.2.1
+
+### Patch Changes
+
+- 33d4889: Fix AgentInstaller failing in Pulumi preview (plan) mode when binary has not been built yet by creating an empty placeholder file for FileAsset hash computation.
+
+  Fix package.json `main` field across all packages to point to `dist/index.js` instead of `src/index.ts`, removing redundant `publishConfig` overrides.
+
+  Fix docker-compose MirrorState dynamic provider to use lazy `require()` imports, avoiding Pulumi closure serialization failures with pnpm store paths.
+
+- Updated dependencies [33d4889]
+  - @opsen/platform@0.3.2
+
 ## 0.2.0
 
 ### Minor Changes

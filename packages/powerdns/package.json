@@ -1,6 +1,6 @@
 {
   "name": "@opsen/powerdns",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Pulumi dynamic providers for PowerDNS authoritative server and Recursor",
   "main": "dist/index.js",
   "files": [

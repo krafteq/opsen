@@ -1,6 +1,6 @@
 {
   "name": "@opsen/docker-compose",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "SSH-based Docker Compose deployer with MirrorState file sync",
   "main": "dist/index.js",
   "files": [
