@@ -64,6 +64,20 @@ export class AgentInstaller extends pulumi.ComponentResource {
       { parent: this },
     )
 
+    // ─── Stop running agent before binary upload ─────────
+    // CopyToRemote uses SFTP which cannot overwrite a binary
+    // that is currently being executed (ETXTBSY). Stop the
+    // service and remove the old file first.
+    const preUpload = new command.remote.Command(
+      `${name}-pre-upload`,
+      {
+        connection: conn,
+        create: 'systemctl stop opsen-agent 2>/dev/null || true; rm -f /usr/local/bin/opsen-agent',
+        triggers: [binHash],
+      },
+      { parent: this, dependsOn: [build, setup] },
+    )
+
     // ─── Upload binary ──────────────────────────────────
     const binary = new command.remote.CopyToRemote(
       `${name}-binary`,
@@ -73,7 +87,7 @@ export class AgentInstaller extends pulumi.ComponentResource {
         remotePath: '/usr/local/bin/opsen-agent',
         triggers: [binHash],
       },
-      { parent: this, dependsOn: [build, setup] },
+      { parent: this, dependsOn: [build, setup, preUpload] },
     )
 
     const chmod = new command.remote.Command(
