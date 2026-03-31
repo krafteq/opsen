@@ -1,5 +1,11 @@
 # @opsen/agent
 
+## 0.2.1
+
+### Patch Changes
+
+- 6e55360: Stop running agent service before uploading new binary to prevent SFTP ETXTBSY failure
+
 ## 0.2.0
 
 ### Minor Changes
