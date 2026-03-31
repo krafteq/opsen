@@ -2,7 +2,7 @@
   "name": "@opsen/azure-fact-store",
   "version": "0.2.1",
   "description": "Azure Key Vault backend for Opsen FactStore",
-  "main": "dist/index.js",
+  "main": "src/index.ts",
   "files": [
     "dist",
     "src"
@@ -26,6 +26,8 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts"
   }
 }
