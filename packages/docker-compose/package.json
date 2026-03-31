@@ -2,7 +2,7 @@
   "name": "@opsen/docker-compose",
   "version": "0.2.2",
   "description": "SSH-based Docker Compose deployer with MirrorState file sync",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "files": [
     "dist",
     "src"
@@ -28,8 +28,6 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts"
+    "access": "public"
   }
 }

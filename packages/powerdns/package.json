@@ -2,7 +2,7 @@
   "name": "@opsen/powerdns",
   "version": "0.2.1",
   "description": "Pulumi dynamic providers for PowerDNS authoritative server and Recursor",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "files": [
     "dist",
     "src"
@@ -24,8 +24,6 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts"
+    "access": "public"
   }
 }

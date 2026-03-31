@@ -2,7 +2,7 @@
   "name": "@opsen/k8s",
   "version": "0.2.0",
   "description": "Kubernetes runtime deployer for Opsen platform",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "files": [
     "dist",
     "src"
@@ -29,8 +29,6 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts"
+    "access": "public"
   }
 }

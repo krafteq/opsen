@@ -2,7 +2,7 @@
   "name": "@opsen/docker",
   "version": "0.2.0",
   "description": "Docker single-host runtime deployer with Caddy ingress",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "files": [
     "dist",
     "src"
@@ -27,8 +27,6 @@
   },
   "license": "MIT",
   "publishConfig": {
-    "access": "public",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts"
+    "access": "public"
   }
 }

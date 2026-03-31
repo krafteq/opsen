@@ -79,11 +79,20 @@ export class AgentInstaller extends pulumi.ComponentResource {
     )
 
     // ─── Upload binary ──────────────────────────────────
+    // FileAsset computes a hash at resource registration (before apply),
+    // so the file must exist on disk. On first run / clean checkout the
+    // build command hasn't executed yet — create an empty placeholder that
+    // will be overwritten by the build step before CopyToRemote applies.
+    const binaryPath = path.join(GO_SRC_DIR, 'out', 'opsen-agent')
+    const outDir = path.dirname(binaryPath)
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
+    if (!fs.existsSync(binaryPath)) fs.writeFileSync(binaryPath, '')
+
     const binary = new command.remote.CopyToRemote(
       `${name}-binary`,
       {
         connection: conn,
-        source: new pulumi.asset.FileAsset(path.join(GO_SRC_DIR, 'out', 'opsen-agent')),
+        source: new pulumi.asset.FileAsset(binaryPath),
         remotePath: '/usr/local/bin/opsen-agent',
         triggers: [binHash],
       },
