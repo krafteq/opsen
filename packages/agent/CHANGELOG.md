@@ -1,5 +1,11 @@
 # @opsen/agent
 
+## 0.2.0
+
+### Minor Changes
+
+- 1e95d91: Add bind address support to ingress routes for binding to specific IPs (e.g. internal-only routes)
+
 ## 0.1.2
 
 ### Patch Changes
