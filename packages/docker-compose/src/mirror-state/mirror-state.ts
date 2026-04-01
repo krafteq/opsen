@@ -8,7 +8,6 @@ type CommonModule = typeof import('./common')
 // serialization. The dynamic provider runs plain Node.js (no tsx), so paths must
 // point to compiled .js files in dist/. When loaded via tsx from src/, remap accordingly.
 function resolveForDynamicProvider(relativePath: string): string {
-   
   let resolved = require.resolve(relativePath)
   resolved = resolved.replace(/\.ts$/, '.js').replace(/\/src\//, '/dist/')
   return resolved
