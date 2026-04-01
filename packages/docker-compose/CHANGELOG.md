@@ -1,5 +1,11 @@
 # @opsen/docker-compose
 
+## 0.2.4
+
+### Patch Changes
+
+- ee9729d: Fix MirrorStateProvider dynamic provider module resolution to survive Pulumi closure serialization
+
 ## 0.2.3
 
 ### Patch Changes
