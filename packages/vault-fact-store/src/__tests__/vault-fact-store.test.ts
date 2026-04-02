@@ -181,7 +181,7 @@ describe('VaultFactStore', () => {
       expect(config.facts[0]).toEqual(expect.objectContaining({ metadata: { name: 'ok' } }))
     })
 
-    it('skips secrets with non-string property values', async () => {
+    it('skips secrets with non-scalar property values', async () => {
       mockClient.list.mockImplementation(async (path: string) => {
         if (path === 'owner') return ['secret/']
         if (path === 'owner/secret') return ['good', 'object-value', 'empty']
@@ -201,6 +201,29 @@ describe('VaultFactStore', () => {
       expect(config.facts[0]).toEqual(
         expect.objectContaining({ kind: 'secret', metadata: { name: 'good' }, spec: { value: 'hunter2' } }),
       )
+    })
+
+    it('converts number values to strings when reading secrets', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'owner') return ['secret/']
+        if (path === 'owner/secret') return ['port-config', 'simple-num']
+        return ['owner/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'owner/secret/port-config') return { host: 'localhost', port: 5432 }
+        if (path === 'owner/secret/simple-num') return { value: 42 }
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(2)
+      expect(config.facts.find((f) => f.metadata.name === 'port-config')!.spec).toEqual({
+        host: 'localhost',
+        port: '5432',
+      })
+      expect(config.facts.find((f) => f.metadata.name === 'simple-num')!.spec).toEqual({ value: '42' })
     })
 
     it('reads with basePath prefix when configured', async () => {

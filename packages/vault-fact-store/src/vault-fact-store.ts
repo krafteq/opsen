@@ -63,12 +63,18 @@ export class VaultFactStore implements FactStoreReader, FactStoreWriter {
           if (!data) return
 
           if (kind === SIMPLE_SECRET_KIND) {
-            const allStrings = Object.keys(data).length > 0 && Object.values(data).every((v) => typeof v === 'string')
-            if (allStrings) {
+            const entries = Object.entries(data)
+            const allScalar =
+              entries.length > 0 && entries.every(([, v]) => typeof v === 'string' || typeof v === 'number')
+            if (allScalar) {
+              const spec: Record<string, string> = {}
+              for (const [k, v] of entries) {
+                spec[k] = String(v)
+              }
               facts.push({
                 kind: SIMPLE_SECRET_KIND,
                 metadata: { name },
-                spec: data as Record<string, string>,
+                spec,
                 owner,
               })
             }
