@@ -1,4 +1,5 @@
 export * from './fact'
+export * from './secret-resolver'
 export * from './config'
 export * from './config-reader'
 export * from './config-merger'
