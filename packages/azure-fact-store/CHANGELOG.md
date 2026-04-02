@@ -1,5 +1,12 @@
 # @opsen/azure-fact-store
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [a2a0f94]
+  - @opsen/base-ops@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes
