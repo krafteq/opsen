@@ -1,5 +1,24 @@
-import { InfrastructureFact, InfrastructureFactLabelValue } from './fact'
+import { InfrastructureFact, InfrastructureFactLabelValue, SIMPLE_SECRET_KIND } from './fact'
 import { InfrastructureConfig } from './config'
+
+export interface SecretSplit {
+  prefix: string
+  property: string
+}
+
+/** Split a camelCase name into all possible (prefix, property) pairs. */
+export function camelCaseSplits(name: string): SecretSplit[] {
+  const splits: SecretSplit[] = []
+  for (let i = 1; i < name.length; i++) {
+    if (name[i] >= 'A' && name[i] <= 'Z') {
+      const prefix = name.slice(0, i)
+      const rest = name.slice(i)
+      const property = rest[0].toLowerCase() + rest.slice(1)
+      splits.push({ prefix, property })
+    }
+  }
+  return splits
+}
 
 export class InfrastructureFactsPool<TFacts extends InfrastructureFact = InfrastructureFact> {
   private readonly factsMap: Map<string, TFacts> = new Map<string, TFacts>()
@@ -53,6 +72,38 @@ export class InfrastructureFactsPool<TFacts extends InfrastructureFact = Infrast
     }
 
     return facts.filter((x) => this.matches(x, labels)) as T[]
+  }
+
+  /**
+   * Resolve a secret by name. Tries exact match first, then camelCase group+property splits.
+   * Returns `undefined` if no match is found.
+   */
+  public getSecret(name: string): string | undefined {
+    const direct = this.getFact(SIMPLE_SECRET_KIND, name)
+    if (direct && typeof direct.spec.value === 'string') {
+      return direct.spec.value
+    }
+
+    for (const { prefix, property } of camelCaseSplits(name)) {
+      const group = this.getFact(SIMPLE_SECRET_KIND, prefix)
+      if (group) {
+        const value = (group.spec as Record<string, unknown>)[property]
+        if (typeof value === 'string') {
+          return value
+        }
+      }
+    }
+
+    return undefined
+  }
+
+  /** Resolve a secret by name, throwing if not found. */
+  public requireSecret(name: string): string {
+    const value = this.getSecret(name)
+    if (value === undefined) {
+      throw new Error(`Secret "${name}" not found`)
+    }
+    return value
   }
 
   private matches(fact: TFacts, labels: Record<string, InfrastructureFactLabelValue>): boolean {

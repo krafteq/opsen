@@ -4,6 +4,10 @@ import { InfrastructureFactsPool } from '../facts-pool.js'
 import { simpleSecret, secretGroup } from '../fact.js'
 import { camelCaseSplits, resolveSecret, requireSecret } from '../secret-resolver.js'
 
+function poolFrom(...facts: InfrastructureConfig['facts']): InfrastructureFactsPool {
+  return new InfrastructureFactsPool({ facts })
+}
+
 describe('camelCaseSplits', () => {
   it('splits a two-word camelCase name', () => {
     expect(camelCaseSplits('apiKey')).toEqual([{ prefix: 'api', property: 'key' }])
@@ -43,20 +47,16 @@ describe('camelCaseSplits', () => {
   })
 })
 
-describe('resolveSecret', () => {
-  function poolFrom(...facts: InfrastructureConfig['facts']): InfrastructureFactsPool {
-    return new InfrastructureFactsPool({ facts })
-  }
-
+describe('pool.getSecret', () => {
   it('resolves a simple secret by exact name', () => {
     const pool = poolFrom(simpleSecret('netbirdApiKey', 's3cret', 'admin'))
-    expect(resolveSecret(pool, 'netbirdApiKey')).toBe('s3cret')
+    expect(pool.getSecret('netbirdApiKey')).toBe('s3cret')
   })
 
   it('resolves a grouped secret property via camelCase split', () => {
     const pool = poolFrom(secretGroup('netbird', { apiKey: 'key1', webhookSecret: 'wh1' }, 'admin'))
-    expect(resolveSecret(pool, 'netbirdApiKey')).toBe('key1')
-    expect(resolveSecret(pool, 'netbirdWebhookSecret')).toBe('wh1')
+    expect(pool.getSecret('netbirdApiKey')).toBe('key1')
+    expect(pool.getSecret('netbirdWebhookSecret')).toBe('wh1')
   })
 
   it('prefers exact match over group match', () => {
@@ -64,36 +64,44 @@ describe('resolveSecret', () => {
       simpleSecret('netbirdApiKey', 'exact-value', 'admin'),
       secretGroup('netbird', { apiKey: 'group-value' }, 'admin2'),
     )
-    expect(resolveSecret(pool, 'netbirdApiKey')).toBe('exact-value')
+    expect(pool.getSecret('netbirdApiKey')).toBe('exact-value')
   })
 
   it('returns undefined when secret not found', () => {
     const pool = poolFrom(simpleSecret('other', 'val', 'admin'))
-    expect(resolveSecret(pool, 'netbirdApiKey')).toBeUndefined()
+    expect(pool.getSecret('netbirdApiKey')).toBeUndefined()
   })
 
   it('returns undefined when group exists but property does not', () => {
     const pool = poolFrom(secretGroup('netbird', { token: 'tok' }, 'admin'))
-    expect(resolveSecret(pool, 'netbirdApiKey')).toBeUndefined()
+    expect(pool.getSecret('netbirdApiKey')).toBeUndefined()
   })
 
   it('tries multiple split points and matches the first valid one', () => {
     const pool = poolFrom(secretGroup('netbirdApi', { key: 'from-second-split' }, 'admin'))
-    expect(resolveSecret(pool, 'netbirdApiKey')).toBe('from-second-split')
+    expect(pool.getSecret('netbirdApiKey')).toBe('from-second-split')
   })
 })
 
-describe('requireSecret', () => {
-  function poolFrom(...facts: InfrastructureConfig['facts']): InfrastructureFactsPool {
-    return new InfrastructureFactsPool({ facts })
-  }
-
+describe('pool.requireSecret', () => {
   it('returns value when secret exists', () => {
     const pool = poolFrom(simpleSecret('dbPassword', 'hunter2', 'admin'))
-    expect(requireSecret(pool, 'dbPassword')).toBe('hunter2')
+    expect(pool.requireSecret('dbPassword')).toBe('hunter2')
   })
 
   it('throws when secret not found', () => {
+    const pool = poolFrom()
+    expect(() => pool.requireSecret('missing')).toThrow('Secret "missing" not found')
+  })
+})
+
+describe('standalone functions (deprecated delegates)', () => {
+  it('resolveSecret delegates to pool.getSecret', () => {
+    const pool = poolFrom(simpleSecret('key', 'val', 'admin'))
+    expect(resolveSecret(pool, 'key')).toBe('val')
+  })
+
+  it('requireSecret delegates to pool.requireSecret', () => {
     const pool = poolFrom()
     expect(() => requireSecret(pool, 'missing')).toThrow('Secret "missing" not found')
   })
