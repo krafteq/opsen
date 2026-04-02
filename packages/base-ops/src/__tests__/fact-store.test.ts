@@ -3,7 +3,7 @@ import type { FactStoreReader, FactStoreWriter } from '../fact-store.js'
 import type { InfrastructureConfig } from '../config.js'
 import { InfrastructureFactsPool } from '../facts-pool.js'
 import { InfrastructureConfigMerger } from '../config-merger.js'
-import { simpleSecret, SIMPLE_SECRET_KIND, type SimpleSecretFact } from '../fact.js'
+import { simpleSecret, secretGroup, SIMPLE_SECRET_KIND, type SimpleSecretFact, type SecretGroupFact } from '../fact.js'
 
 describe('FactStoreReader', () => {
   it('returns facts from a mock reader', async () => {
@@ -182,5 +182,41 @@ describe('SimpleSecret', () => {
 
     expect(secret.spec.value).toBe('hunter2')
     expect(pool.getAll(SIMPLE_SECRET_KIND)).toHaveLength(2)
+  })
+})
+
+describe('SecretGroup', () => {
+  it('creates a grouped secret fact', () => {
+    const fact = secretGroup('netbird', { apiKey: 'key1', webhookSecret: 'wh1' }, 'admin')
+
+    expect(fact).toEqual({
+      kind: SIMPLE_SECRET_KIND,
+      metadata: { name: 'netbird' },
+      spec: { apiKey: 'key1', webhookSecret: 'wh1' },
+      owner: 'admin',
+    })
+  })
+
+  it('works with FactsPool lookup', () => {
+    const config: InfrastructureConfig = {
+      facts: [secretGroup('netbird', { apiKey: 'key1', token: 'tok1' }, 'admin')],
+    }
+
+    const pool = new InfrastructureFactsPool(config)
+    const group = pool.requireFact<SecretGroupFact>(SIMPLE_SECRET_KIND, 'netbird')
+
+    expect(group.spec.apiKey).toBe('key1')
+    expect(group.spec.token).toBe('tok1')
+  })
+
+  it('coexists with simple secrets in the same pool', () => {
+    const config: InfrastructureConfig = {
+      facts: [simpleSecret('standalone', 'val', 'admin'), secretGroup('netbird', { apiKey: 'key1' }, 'admin')],
+    }
+
+    const pool = new InfrastructureFactsPool(config)
+    expect(pool.getAll(SIMPLE_SECRET_KIND)).toHaveLength(2)
+    expect(pool.requireFact<SimpleSecretFact>(SIMPLE_SECRET_KIND, 'standalone').spec.value).toBe('val')
+    expect(pool.requireFact<SecretGroupFact>(SIMPLE_SECRET_KIND, 'netbird').spec.apiKey).toBe('key1')
   })
 })

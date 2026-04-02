@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { InfrastructureFact } from '@opsen/base-ops'
-import { SIMPLE_SECRET_KIND, simpleSecret } from '@opsen/base-ops'
+import { SIMPLE_SECRET_KIND, simpleSecret, secretGroup } from '@opsen/base-ops'
 import { VaultFactStore } from '../vault-fact-store.js'
 import { VaultKV2Client } from '../vault-client.js'
 
@@ -181,16 +181,16 @@ describe('VaultFactStore', () => {
       expect(config.facts[0]).toEqual(expect.objectContaining({ metadata: { name: 'ok' } }))
     })
 
-    it('skips simple secrets with non-string value', async () => {
+    it('skips secrets with non-string property values', async () => {
       mockClient.list.mockImplementation(async (path: string) => {
         if (path === 'owner') return ['secret/']
-        if (path === 'owner/secret') return ['good', 'no-value', 'object-value']
+        if (path === 'owner/secret') return ['good', 'object-value', 'empty']
         return ['owner/']
       })
       mockClient.get.mockImplementation(async (path: string) => {
         if (path === 'owner/secret/good') return { value: 'hunter2' }
-        if (path === 'owner/secret/no-value') return { something: 'else' }
         if (path === 'owner/secret/object-value') return { value: { nested: true } }
+        if (path === 'owner/secret/empty') return {}
         return null
       })
 
@@ -344,6 +344,44 @@ describe('VaultFactStore', () => {
 
       expect(mockClient.put).toHaveBeenCalledWith('manual/secret/db-password', { value: 'hunter2' })
       expect(mockClient.put).toHaveBeenCalledWith('manual/cluster/prod', expect.objectContaining({ kind: 'cluster' }))
+    })
+
+    it('reads grouped secrets with multiple string properties', async () => {
+      mockClient.list.mockImplementation(async (path: string) => {
+        if (path === 'manual') return ['secret/']
+        if (path === 'manual/secret') return ['netbird']
+        return ['manual/']
+      })
+      mockClient.get.mockImplementation(async (path: string) => {
+        if (path === 'manual/secret/netbird') return { apiKey: 'key1', webhookSecret: 'wh1' }
+        return null
+      })
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' })
+      const config = await store.read()
+
+      expect(config.facts).toHaveLength(1)
+      expect(config.facts[0]).toEqual({
+        kind: 'secret',
+        metadata: { name: 'netbird' },
+        spec: { apiKey: 'key1', webhookSecret: 'wh1' },
+        owner: 'manual',
+      })
+    })
+
+    it('writes grouped secrets as raw properties', async () => {
+      mockClient.put.mockResolvedValue(undefined)
+      mockClient.list.mockResolvedValue([])
+
+      const store = new VaultFactStore({ address: 'https://vault', token: 'tok' }, 'manual')
+      await store.write({
+        facts: [secretGroup('netbird', { apiKey: 'key1', webhookSecret: 'wh1' }, 'manual')],
+      })
+
+      expect(mockClient.put).toHaveBeenCalledWith('manual/secret/netbird', {
+        apiKey: 'key1',
+        webhookSecret: 'wh1',
+      })
     })
 
     it('cleans up stale simple secrets via directory listing', async () => {

@@ -63,12 +63,12 @@ export class VaultFactStore implements FactStoreReader, FactStoreWriter {
           if (!data) return
 
           if (kind === SIMPLE_SECRET_KIND) {
-            const value = data.value
-            if (typeof value === 'string') {
+            const allStrings = Object.keys(data).length > 0 && Object.values(data).every((v) => typeof v === 'string')
+            if (allStrings) {
               facts.push({
                 kind: SIMPLE_SECRET_KIND,
                 metadata: { name },
-                spec: { value },
+                spec: data as Record<string, string>,
                 owner,
               })
             }
@@ -101,7 +101,7 @@ export class VaultFactStore implements FactStoreReader, FactStoreWriter {
     const writes = config.facts.map(async (fact) => {
       const path = factPath(this.basePath, this.owner!, fact.kind, fact.metadata.name)
       if (fact.kind === SIMPLE_SECRET_KIND) {
-        await this.client.put(path, { value: (fact.spec as { value: string }).value })
+        await this.client.put(path, fact.spec as Record<string, string>)
       } else {
         await this.client.put(path, fact as unknown as Record<string, unknown>)
       }

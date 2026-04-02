@@ -45,3 +45,21 @@ export function simpleSecret(name: string, value: string, owner: string): Simple
     owner,
   }
 }
+
+// --- Grouped Secrets ---
+
+/** Spec for a secret group holding multiple named properties. */
+export type SecretGroupSpec = Record<string, string>
+
+/** A fact that holds multiple named secret values under a single group name. */
+export type SecretGroupFact = InfrastructureFact<typeof SIMPLE_SECRET_KIND, SecretGroupSpec>
+
+/** Create a grouped secret fact with multiple named properties. */
+export function secretGroup(name: string, properties: Record<string, string>, owner: string): SecretGroupFact {
+  return {
+    kind: SIMPLE_SECRET_KIND,
+    metadata: { name },
+    spec: properties,
+    owner,
+  }
+}
