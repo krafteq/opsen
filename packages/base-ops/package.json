@@ -1,6 +1,6 @@
 {
   "name": "@opsen/base-ops",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Infrastructure facts, deployer, and module system for Pulumi",
   "main": "src/index.ts",
   "files": [
