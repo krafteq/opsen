@@ -9,6 +9,20 @@ import type { AgentInstallerArgs } from './types.js'
 
 const GO_SRC_DIR = path.resolve(__dirname, '..', 'go')
 
+/** Wraps a shell command with sudo when the SSH user is not root. */
+function sudo(connUser: pulumi.Input<string> | undefined, cmd: string): pulumi.Output<string> {
+  return pulumi.output(connUser ?? 'root').apply((user) => (user === 'root' ? cmd : `sudo sh -c ${shellQuote(cmd)}`))
+}
+
+/** Wraps multi-line shell commands with sudo when the SSH user is not root. */
+function sudoScript(connUser: pulumi.Input<string> | undefined, lines: string[]): pulumi.Output<string> {
+  return sudo(connUser, lines.join('\n'))
+}
+
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
 export class AgentInstaller extends pulumi.ComponentResource {
   declare readonly endpoint: pulumi.Output<string>
   declare readonly binaryHash: pulumi.Output<string>
@@ -17,6 +31,7 @@ export class AgentInstaller extends pulumi.ComponentResource {
     super('opsen:agent:Installer', name, {}, opts)
 
     const conn = args.connection
+    const connUser = conn.user
 
     // ─── Build binary locally in Docker ─────────────────
     const sourceHash = computeSourceHash(GO_SRC_DIR)
@@ -45,22 +60,22 @@ export class AgentInstaller extends pulumi.ComponentResource {
       if (config.roles?.ingress?.configDir) {
         cmds.push(`chown opsen-agent:opsen-agent ${config.roles.ingress.configDir}`)
       }
-      return cmds.join('\n')
+      return cmds
     })
 
     const setup = new command.remote.Command(
       `${name}-setup`,
       {
         connection: conn,
-        create: setupCommands,
-        delete: [
+        create: setupCommands.apply((cmds) => sudoScript(connUser, cmds)),
+        delete: sudoScript(connUser, [
           'systemctl stop opsen-agent 2>/dev/null || true',
           'systemctl disable opsen-agent 2>/dev/null || true',
           'rm -f /etc/systemd/system/opsen-agent.service /usr/local/bin/opsen-agent',
           'rm -rf /etc/opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
           'userdel opsen-agent 2>/dev/null || true',
           'systemctl daemon-reload',
-        ].join('\n'),
+        ]),
       },
       { parent: this },
     )
@@ -73,7 +88,7 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-pre-upload`,
       {
         connection: conn,
-        create: 'systemctl stop opsen-agent 2>/dev/null || true; rm -f /usr/local/bin/opsen-agent',
+        create: sudo(connUser, 'systemctl stop opsen-agent 2>/dev/null || true; rm -f /usr/local/bin/opsen-agent'),
         triggers: [binHash],
       },
       { parent: this, dependsOn: [build, setup] },
@@ -89,12 +104,13 @@ export class AgentInstaller extends pulumi.ComponentResource {
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
     if (!fs.existsSync(binaryPath)) fs.writeFileSync(binaryPath, '')
 
+    // Upload to /tmp first (SFTP doesn't use sudo), then move to /usr/local/bin
     const binary = new command.remote.CopyToRemote(
       `${name}-binary`,
       {
         connection: conn,
         source: new pulumi.asset.FileAsset(binaryPath),
-        remotePath: '/usr/local/bin/opsen-agent',
+        remotePath: '/tmp/opsen-agent',
         triggers: [binHash],
       },
       { parent: this, dependsOn: [build, setup, preUpload] },
@@ -104,14 +120,14 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-chmod`,
       {
         connection: conn,
-        create: 'chmod +x /usr/local/bin/opsen-agent',
+        create: sudo(connUser, 'mv /tmp/opsen-agent /usr/local/bin/opsen-agent && chmod +x /usr/local/bin/opsen-agent'),
         triggers: [binHash],
       },
       { parent: this, dependsOn: [binary] },
     )
 
     // ─── Upload TLS certs ───────────────────────────────
-    const tlsResources = uploadTlsCerts(name, conn, args.tls, this, setup)
+    const tlsResources = uploadTlsCerts(name, conn, connUser, args.tls, this, setup)
 
     // ─── Write agent config ─────────────────────────────
     const configYaml = pulumi.output(args.config).apply((c) => serializeAgentConfig(c))
@@ -121,7 +137,9 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-config`,
       {
         connection: conn,
-        create: pulumi.interpolate`cat > /etc/opsen-agent/agent.yaml << 'OPSENEOF'\n${configYaml}\nOPSENEOF`,
+        create: configYaml.apply((yaml) =>
+          sudo(connUser, `cat > /etc/opsen-agent/agent.yaml << 'OPSENEOF'\n${yaml}\nOPSENEOF`),
+        ),
         triggers: [configHash],
       },
       { parent: this, dependsOn: [setup] },
@@ -159,7 +177,10 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-service`,
       {
         connection: conn,
-        create: pulumi.interpolate`cat > /etc/systemd/system/opsen-agent.service << 'OPSENEOF'\n${systemdUnit}\nOPSENEOF
+        create: systemdUnit.apply((unit) =>
+          sudo(
+            connUser,
+            `cat > /etc/systemd/system/opsen-agent.service << 'OPSENEOF'\n${unit}\nOPSENEOF
 systemctl daemon-reload
 systemctl enable opsen-agent
 systemctl restart opsen-agent
@@ -170,6 +191,8 @@ done
 echo "opsen-agent failed to start" >&2
 journalctl -u opsen-agent --no-pager -n 30 >&2
 exit 1`,
+          ),
+        ),
         triggers: [restartTrigger],
       },
       { parent: this, dependsOn: [chmod, agentConfig, ...tlsResources, clientMirror] },
@@ -190,6 +213,7 @@ exit 1`,
 function uploadTlsCerts(
   name: string,
   conn: command.types.input.remote.ConnectionArgs,
+  connUser: pulumi.Input<string> | undefined,
   tls: AgentInstallerArgs['tls'],
   parent: pulumi.Resource,
   dependsOn: pulumi.Resource,
@@ -206,9 +230,14 @@ function uploadTlsCerts(
         `${name}-tls-${f.key}`,
         {
           connection: conn,
-          create: pulumi.interpolate`cat > ${f.remotePath} << 'OPSENEOF'\n${f.content}\nOPSENEOF
-chmod ${f.mode} ${f.remotePath}
-chown opsen-agent:opsen-agent ${f.remotePath}`,
+          create: pulumi
+            .output(f.content)
+            .apply((content) =>
+              sudo(
+                connUser,
+                `cat > ${f.remotePath} << 'OPSENEOF'\n${content}\nOPSENEOF\nchmod ${f.mode} ${f.remotePath}\nchown opsen-agent:opsen-agent ${f.remotePath}`,
+              ),
+            ),
           triggers: [pulumi.output(f.content).apply((c) => hashString(c))],
         },
         { parent, dependsOn: [dependsOn] },
