@@ -3,9 +3,9 @@ import * as k8s from '@pulumi/kubernetes'
 
 export interface KafkaOperatorArgs {
   namespace: pulumi.Input<string>
-  watchNamespaces: pulumi.Input<string[]>
-  nodeSelector?: pulumi.Input<Record<string, string>>
-  watchAnyNamespace: boolean
+  watchNamespaces: pulumi.Input<pulumi.Input<string>[]>
+  nodeSelector?: pulumi.Input<Record<string, pulumi.Input<string>>>
+  watchAnyNamespace: pulumi.Input<boolean>
   version?: pulumi.Input<string>
 }
 

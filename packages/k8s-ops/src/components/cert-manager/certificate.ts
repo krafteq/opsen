@@ -58,6 +58,6 @@ export class Certificate extends pulumi.ComponentResource {
 
 export interface CertificateArgs {
   namespace: pulumi.Input<string>
-  domain: string
-  issuer: string
+  domain: pulumi.Input<string>
+  issuer: pulumi.Input<string>
 }

@@ -8,8 +8,8 @@ export interface MinioOperatorArgs {
   version?: pulumi.Input<string>
   ingress?: {
     consoleHost: string
-    consolePath?: string
-    certificateIssuer: string
+    consolePath?: pulumi.Input<string>
+    certificateIssuer: pulumi.Input<string>
   }
 }
 

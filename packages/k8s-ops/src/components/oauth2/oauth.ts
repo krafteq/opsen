@@ -8,7 +8,7 @@ export interface OAuthArgs {
   helmOverride?: pulumi.Input<HelmOverride>
   provider: pulumi.Input<OAuthProvider>
   domain: pulumi.Input<string>
-  emailDomains: pulumi.Input<string[]>
+  emailDomains: pulumi.Input<pulumi.Input<string>[]>
   ingress: pulumi.Input<Ingress>
 }
 
@@ -96,9 +96,10 @@ export class Oauth extends pulumi.ComponentResource {
   }
 }
 
-function toGolangConfigList(list: pulumi.Input<string[]>): pulumi.Output<string> {
+function toGolangConfigList(list: pulumi.Input<pulumi.Input<string>[]>): pulumi.Output<string> {
   return pulumi
     .output(list)
+    .apply((x) => pulumi.all(x))
     .apply((x) => x.map((x) => `"${x}"`).join(','))
     .apply((x) => `[${x}]`)
 }

@@ -2,7 +2,7 @@ import * as pulumi from '@pulumi/pulumi'
 
 export interface Ingress {
   /** The ingress host i.e. www.example.com. */
-  hosts?: pulumi.Input<string[]>
+  hosts?: pulumi.Input<pulumi.Input<string>[]>
   /** Virtual path of the ingress resource */
   path?: pulumi.Input<string>
   /** Enable acme tls for this ingress. Defaults to true. */
@@ -14,17 +14,17 @@ export interface Ingress {
   /** Redirect non-http requests to https */
   sslRedirect?: pulumi.Input<boolean>
   /** Middleware to protect ingress with OAuth2 authentication */
-  auth?: {
+  auth?: pulumi.Input<{
     signInUrl: pulumi.Input<string>
     authUrl: pulumi.Input<string>
-  }
+  }>
   /** Any additional annotations */
   annotations?: pulumi.Input<Record<string, pulumi.Input<string>>>
 }
 
 export interface Persistence {
   enabled?: pulumi.Input<boolean>
-  sizeGB?: number
+  sizeGB?: pulumi.Input<number>
   storageClass?: pulumi.Input<string | undefined>
-  mountPath?: string
+  mountPath?: pulumi.Input<string>
 }

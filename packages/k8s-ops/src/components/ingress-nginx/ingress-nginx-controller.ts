@@ -7,9 +7,9 @@ export interface IngressNginxControllerArgs {
   helmOverride?: pulumi.Input<HelmOverride>
   default?: pulumi.Input<boolean>
   ingressClass?: pulumi.Input<string> /* default nginx */
-  service?: {
+  service?: pulumi.Input<{
     annotations?: pulumi.Input<Record<string, pulumi.Input<string>>>
-  }
+  }>
 }
 
 export class IngressNginxController extends pulumi.ComponentResource {

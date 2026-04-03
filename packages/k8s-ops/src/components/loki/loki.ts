@@ -6,13 +6,13 @@ export interface LokiArgs {
   namespace?: pulumi.Input<string>
   helmOverride?: pulumi.Input<HelmOverride>
   /** The retention time for recorded logs in hours. Defaults to 7 days (168h). */
-  retentionHours?: number
+  retentionHours?: pulumi.Input<number>
   /** Enable systemd-journal support. */
   scrapeSystemdJournal?: boolean
   /** Data persistence for loki's log database */
-  persistence?: Persistence
+  persistence?: pulumi.Input<Persistence>
   /** Pod resource request/limits */
-  resources?: ComputeResources
+  resources?: pulumi.Input<ComputeResources>
 }
 
 export class Loki extends pulumi.ComponentResource {
@@ -34,63 +34,65 @@ export class Loki extends pulumi.ComponentResource {
         repositoryOpts: {
           repo: 'https://grafana.github.io/helm-charts',
         },
-        values: helmOverride.apply((x) => ({
-          deploymentMode: 'SingleBinary',
-          loki: {
-            auth_enabled: false,
-            commonConfig: {
-              replication_factor: 1,
-            },
-            storage: {
-              type: 'filesystem',
-            },
-            schemaConfig: {
-              configs: [
-                {
-                  from: '2024-04-01',
-                  store: 'tsdb',
-                  object_store: 'filesystem',
-                  schema: 'v13',
-                  index: {
-                    prefix: 'loki_index_',
-                    period: '24h',
+        values: pulumi
+          .all([helmOverride, args.retentionHours, args.persistence, args.resources])
+          .apply(([x, retentionHours, persistence, resources]) => ({
+            deploymentMode: 'SingleBinary',
+            loki: {
+              auth_enabled: false,
+              commonConfig: {
+                replication_factor: 1,
+              },
+              storage: {
+                type: 'filesystem',
+              },
+              schemaConfig: {
+                configs: [
+                  {
+                    from: '2024-04-01',
+                    store: 'tsdb',
+                    object_store: 'filesystem',
+                    schema: 'v13',
+                    index: {
+                      prefix: 'loki_index_',
+                      period: '24h',
+                    },
                   },
-                },
-              ],
+                ],
+              },
+              limits_config: {
+                retention_period: `${retentionHours || 168}h`,
+              },
+              compactor: {
+                retention_enabled: true,
+                delete_request_store: 'filesystem',
+              },
             },
-            limits_config: {
-              retention_period: `${args.retentionHours || 168}h`,
+            singleBinary: {
+              replicas: 1,
+              persistence: persistence
+                ? {
+                    enabled: persistence.enabled,
+                    size: `${persistence.sizeGB}Gi`,
+                    storageClass: persistence.storageClass,
+                  }
+                : { enabled: false },
+              resources: resources,
             },
-            compactor: {
-              retention_enabled: true,
-              delete_request_store: 'filesystem',
+            read: { replicas: 0 },
+            write: { replicas: 0 },
+            backend: { replicas: 0 },
+            gateway: { enabled: false },
+            chunksCache: { enabled: false },
+            resultsCache: { enabled: false },
+            monitoring: {
+              selfMonitoring: { enabled: false },
+              lokiCanary: { enabled: false },
             },
-          },
-          singleBinary: {
-            replicas: 1,
-            persistence: args.persistence
-              ? {
-                  enabled: args.persistence.enabled,
-                  size: `${args.persistence.sizeGB}Gi`,
-                  storageClass: args.persistence.storageClass,
-                }
-              : { enabled: false },
-            resources: args.resources,
-          },
-          read: { replicas: 0 },
-          write: { replicas: 0 },
-          backend: { replicas: 0 },
-          gateway: { enabled: false },
-          chunksCache: { enabled: false },
-          resultsCache: { enabled: false },
-          monitoring: {
-            selfMonitoring: { enabled: false },
-            lokiCanary: { enabled: false },
-          },
-          test: { enabled: false },
-          minio: { enabled: false },
-          ...x?.values,
-        })),
+            test: { enabled: false },
+            minio: { enabled: false },
+            ...x?.values,
+          })),
         timeout: 600,
       },
       { parent: this },

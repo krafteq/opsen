@@ -1,19 +1,26 @@
 import * as pulumi from '@pulumi/pulumi'
 
 export interface DnsRecord {
-  name: string
-  type: string
-  ttl: number
-  records: string[]
+  name: pulumi.Input<string>
+  type: pulumi.Input<string>
+  ttl: pulumi.Input<number>
+  records: pulumi.Input<pulumi.Input<string>[]>
 }
 
 export interface PowerDnsZoneInputs {
   apiUrl: pulumi.Input<string>
   apiKey: pulumi.Input<string>
-  zoneName: string
-  kind?: string
-  nameservers?: string[]
-  records?: DnsRecord[]
+  zoneName: pulumi.Input<string>
+  kind?: pulumi.Input<string>
+  nameservers?: pulumi.Input<pulumi.Input<string>[]>
+  records?: pulumi.Input<pulumi.Input<DnsRecord>[]>
+}
+
+interface DnsRecordResolved {
+  name: string
+  type: string
+  ttl: number
+  records: string[]
 }
 
 interface PowerDnsZoneProviderInputs {
@@ -22,7 +29,7 @@ interface PowerDnsZoneProviderInputs {
   zoneName: string
   kind: string
   nameservers: string[]
-  records: DnsRecord[]
+  records: DnsRecordResolved[]
 }
 
 async function apiRequest(
@@ -57,7 +64,7 @@ async function apiRequest(
   return { status: resp.status, data }
 }
 
-function toRRSets(records: DnsRecord[], changetype = 'REPLACE') {
+function toRRSets(records: DnsRecordResolved[], changetype = 'REPLACE') {
   return records.map((r) => ({
     name: r.name,
     type: r.type,

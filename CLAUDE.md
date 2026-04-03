@@ -115,6 +115,24 @@ The root `package.json` has `"type": "module"`. TypeScript uses `module: "nodene
 - `"main": "src/index.ts"` — for local development / workspace resolution
 - `"publishConfig": { "main": "dist/index.js", "types": "dist/index.d.ts" }` — for npm consumers
 
+### Pulumi Input Wrapping for Resource Args
+
+All public `Args` interfaces for Pulumi resources (both `dynamic.Resource` and `ComponentResource`) must wrap fields with `pulumi.Input<>` so consumers can pass Outputs directly without `.apply()`:
+
+- **Scalars**: `pulumi.Input<string>`, `pulumi.Input<number>`, `pulumi.Input<boolean>`
+- **Arrays**: double-wrap — `pulumi.Input<pulumi.Input<string>[]>`
+- **Records**: double-wrap values — `pulumi.Input<Record<string, pulumi.Input<string>>>`
+- **Nested objects**: wrap the object and inner fields — `pulumi.Input<{ field: pulumi.Input<string> }>`
+
+**Dynamic resources** — Pulumi resolves all Inputs recursively before passing to provider methods. Double-wrap freely. Keep a separate plain `ProviderInputs` interface for the provider methods.
+
+**ComponentResources** — fields used in construction-time conditionals or iteration (e.g., `if (args.enabled)`, `for (const x of args.items)`) must stay concrete because an unresolved `Input` (Output/Promise) is always truthy. Wrap everything else. Use `pulumi.all()` to resolve groups of Inputs before accessing their values:
+
+```typescript
+const resolved = pulumi.all({ foo: args.foo, bar: args.bar })
+// use resolved.apply(({ foo, bar }) => ...) for helm values, etc.
+```
+
 ## Security
 
 - **No shell command injection** — never interpolate variables into `execSync()` strings. Use `execFileSync(cmd, args[])` with argument arrays instead. This applies to all CLI wrappers (`az`, `hcloud`, `docker`, `ssh`, `kubectl`, etc.) in `@opsen/testing` and e2e tests.

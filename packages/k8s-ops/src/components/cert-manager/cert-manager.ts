@@ -6,12 +6,12 @@ export interface CertManagerArgs {
   namespace?: pulumi.Input<string>
   helmOverride?: pulumi.Input<HelmOverride>
 
-  replicas?: number
+  replicas?: pulumi.Input<number>
 
   letsencrypt?: {
     enabled: boolean
     /** Email address used for ACME registration */
-    email?: string
+    email?: pulumi.Input<string>
     staging?: boolean
   }
 

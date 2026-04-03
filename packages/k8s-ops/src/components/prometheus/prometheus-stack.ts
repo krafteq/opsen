@@ -7,9 +7,9 @@ import { HelmHelpers } from '../helpers/helm-helpers'
 export interface PrometheusArgs {
   namespace?: pulumi.Input<string>
   persistence: {
-    prometheus: Persistence
-    grafana: Persistence
-    alertManager: Persistence
+    prometheus: pulumi.Input<Persistence>
+    grafana: pulumi.Input<Persistence>
+    alertManager: pulumi.Input<Persistence>
   }
   helmOverride?: pulumi.Input<HelmOverride>
   ingress?: {
@@ -57,6 +57,11 @@ export class PrometheusStack extends pulumi.ComponentResource {
     )
 
     const ingress = pulumi.output(args.ingress).apply((x) => ({ tls: true, sslRedirect: true, ...x }))
+    const persistence = pulumi.all({
+      prometheus: pulumi.output(args.persistence.prometheus),
+      grafana: pulumi.output(args.persistence.grafana),
+      alertManager: pulumi.output(args.persistence.alertManager),
+    })
 
     const prom = new k8s.helm.v3.Release(
       name,
@@ -65,7 +70,7 @@ export class PrometheusStack extends pulumi.ComponentResource {
         chart: meta.chart,
         version: meta.version,
         repositoryOpts: { repo: meta.repo },
-        values: helmOverride.apply((x) => ({
+        values: pulumi.all([helmOverride, persistence]).apply(([x, p]) => ({
           prometheusOperator: {
             createCustomResource: false,
             tls: { enabled: false },
@@ -80,9 +85,9 @@ export class PrometheusStack extends pulumi.ComponentResource {
               `${name}-grafana`,
             ),
             persistence: {
-              enabled: args.persistence.grafana.enabled,
-              storageClassName: args.persistence.grafana.storageClass,
-              size: `${args.persistence.grafana.sizeGB}Gi`,
+              enabled: p.grafana.enabled,
+              storageClassName: p.grafana.storageClass,
+              size: `${p.grafana.sizeGB}Gi`,
             },
             deploymentStrategy: { type: 'Recreate' },
             rbac: { pspEnabled: false },
@@ -117,11 +122,11 @@ export class PrometheusStack extends pulumi.ComponentResource {
             storageSpec: {
               volumeClaimTemplate: {
                 spec: {
-                  storageClassName: args.persistence.prometheus.storageClass,
+                  storageClassName: p.prometheus.storageClass,
                   accessModes: ['ReadWriteOnce'],
                   resources: {
                     requests: {
-                      storage: `${args.persistence.prometheus.sizeGB}Gi`,
+                      storage: `${p.prometheus.sizeGB}Gi`,
                     },
                   },
                 },
@@ -138,11 +143,11 @@ export class PrometheusStack extends pulumi.ComponentResource {
             storage: {
               volumeClaimTemplate: {
                 spec: {
-                  storageClassName: args.persistence.alertManager.storageClass,
+                  storageClassName: p.alertManager.storageClass,
                   accessModes: ['ReadWriteOnce'],
                   resources: {
                     requests: {
-                      storage: `${args.persistence.alertManager.sizeGB}Gi`,
+                      storage: `${p.alertManager.sizeGB}Gi`,
                     },
                   },
                 },

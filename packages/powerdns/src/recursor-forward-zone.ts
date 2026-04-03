@@ -5,9 +5,9 @@ const DEFAULT_FORWARD_SERVERS = ['172.28.0.10:5300']
 export interface RecursorForwardZoneInputs {
   apiUrl: pulumi.Input<string>
   apiKey: pulumi.Input<string>
-  zoneName: string
-  servers?: string[]
-  recursionDesired?: boolean
+  zoneName: pulumi.Input<string>
+  servers?: pulumi.Input<pulumi.Input<string>[]>
+  recursionDesired?: pulumi.Input<boolean>
 }
 
 interface RecursorForwardZoneProviderInputs {
