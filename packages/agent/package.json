@@ -4,6 +4,7 @@
   "description": "Pulumi component for deploying the opsen deploy agent to VMs",
   "main": "src/index.ts",
   "types": "dist/index.d.ts",
+  "type": "module",
   "files": [
     "dist",
     "go",

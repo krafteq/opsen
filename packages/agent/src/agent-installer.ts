@@ -7,7 +7,7 @@ import { MirrorState } from '@opsen/docker-compose'
 import { serializeAgentConfig, serializeClientPolicy } from './config.js'
 import type { AgentInstallerArgs } from './types.js'
 
-const GO_SRC_DIR = path.resolve(__dirname, '..', 'go')
+const GO_SRC_DIR = path.resolve(import.meta.dirname, '..', 'go')
 
 /** Wraps a shell command with sudo when the SSH user is not root. */
 function sudo(connUser: pulumi.Input<string> | undefined, cmd: string): pulumi.Output<string> {

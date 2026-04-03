@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto'
 
 const canRun = isPulumiAvailable()
 
-const GO_OUT_DIR = resolve(__dirname, '..', '..', 'go', 'out')
+const GO_OUT_DIR = resolve(import.meta.dirname, '..', '..', 'go', 'out')
 const BINARY_PATH = join(GO_OUT_DIR, 'opsen-agent')
 
 let stateDir: string
