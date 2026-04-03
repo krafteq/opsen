@@ -29,6 +29,7 @@ export function serializeAgentConfig(config: pulumi.Unwrap<AgentConfig>): string
       compose_binary: c.composeBinary ?? 'docker compose',
       deployments_dir: c.deploymentsDir ?? '/var/lib/opsen-agent/deployments/',
       network_prefix: c.networkPrefix ?? 'opsen',
+      ...(c.portRange ? { port_range: c.portRange } : {}),
     }
   }
 

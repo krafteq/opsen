@@ -24,6 +24,8 @@ export interface ComposeRoleConfig {
   composeBinary?: string
   deploymentsDir?: string
   networkPrefix?: string
+  /** Host port range for exposed container ports, e.g. "8000-8999" */
+  portRange?: string
 }
 
 export interface IngressRoleConfig {

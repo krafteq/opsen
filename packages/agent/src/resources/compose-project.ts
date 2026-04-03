@@ -13,9 +13,10 @@ const composeProjectProvider: pulumi.dynamic.ResourceProvider = {
       files: inputs.files,
     })
     checkResponse(resp, [200])
+    const body = resp.body as Record<string, unknown>
     return {
       id: inputs.project,
-      outs: { ...inputs, deployResult: resp.body },
+      outs: { ...inputs, deployResult: body, ports: body.ports },
     }
   },
 
@@ -32,7 +33,8 @@ const composeProjectProvider: pulumi.dynamic.ResourceProvider = {
       files: news.files,
     })
     checkResponse(resp, [200])
-    return { outs: { ...news, deployResult: resp.body } }
+    const body = resp.body as Record<string, unknown>
+    return { outs: { ...news, deployResult: body, ports: body.ports } }
   },
 
   async delete(id, props: ComposeProjectInputs) {
@@ -61,11 +63,16 @@ export interface ComposeProjectArgs {
   files: pulumi.Input<Record<string, pulumi.Input<string>>>
 }
 
+/** Port mappings returned by the agent: service → container_port → host_port */
+export type PortMappings = Record<string, Record<string, number>>
+
 export class ComposeProject extends pulumi.dynamic.Resource {
   declare readonly project: pulumi.Output<string>
   declare readonly deployResult: pulumi.Output<unknown>
+  /** Allocated host port mappings: service → container_port → host_port */
+  declare readonly ports: pulumi.Output<PortMappings | undefined>
 
   constructor(name: string, args: ComposeProjectArgs, opts?: pulumi.CustomResourceOptions) {
-    super(composeProjectProvider, name, { ...args, deployResult: undefined }, opts)
+    super(composeProjectProvider, name, { ...args, deployResult: undefined, ports: undefined }, opts)
   }
 }

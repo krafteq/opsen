@@ -42,7 +42,7 @@ This is a **library monorepo** — there is no CLI. All packages are published t
 @opsen/agent             (standalone — Go binary + Pulumi installer)
 ```
 
-Inter-package dependencies use `file:` relative paths (not `workspace:*`) so external consumers can reference opsen packages via `file:` during development.
+Inter-package dependencies use `workspace:^` protocol within the monorepo. External consumers can reference opsen packages via `file:` paths during development.
 
 ## Common Commands
 
@@ -97,12 +97,23 @@ The root `tsconfig.json` uses TypeScript project references (`composite: true`).
 
 ## Code Conventions
 
-- **ES Modules** throughout (`"type": "module"` in root package.json, `verbatimModuleSyntax` in tsconfig)
+- **ES Modules** throughout — see ESM rules below
 - **Prettier**: single quotes, no semicolons, 120 print width
 - **Conventional Commits**: enforced by commitlint + husky (`feat:`, `fix:`, `refactor:`, etc.)
 - **Node.js >= 22**, **pnpm >= 10.12.1** (npm/yarn blocked)
 - TypeScript strict mode with all strict flags enabled
 - Tests use **Vitest** with globals enabled; unit tests are `*.test.ts`, e2e tests are `*.e2e.test.ts`
+
+### ESM and Module Resolution
+
+The root `package.json` has `"type": "module"`. TypeScript uses `module: "nodenext"` / `moduleResolution: "node16"` (via `@tsconfig/node22`).
+
+**Do NOT add `"type": "module"` to sub-package `package.json` files.** Pulumi packages (`@pulumi/kubernetes`, `@pulumi/docker`, `@pulumi/azure-native`) lack proper ESM `exports` maps, so their deep subpath imports (e.g. `@pulumi/azure-native/network`, `@pulumi/kubernetes/types`) break under strict `nodenext` resolution when the consuming package has `type: "module"`. Only `@opsen/agent` and `@opsen/cert-renewer` have it because they don't use Pulumi deep imports.
+
+**Package setup** — every `package.json` under `packages/` MUST have:
+
+- `"main": "src/index.ts"` — for local development / workspace resolution
+- `"publishConfig": { "main": "dist/index.js", "types": "dist/index.d.ts" }` — for npm consumers
 
 ## Security
 

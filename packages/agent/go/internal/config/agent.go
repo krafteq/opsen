@@ -35,6 +35,7 @@ type ComposeRoleConfig struct {
 	ComposeBinary  string `yaml:"compose_binary"`
 	DeploymentsDir string `yaml:"deployments_dir"`
 	NetworkPrefix  string `yaml:"network_prefix"`
+	PortRange      string `yaml:"port_range"` // Host port range for exposed container ports, e.g. "8000-8999"
 }
 
 type IngressRoleConfig struct {

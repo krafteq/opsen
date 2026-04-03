@@ -48,6 +48,7 @@ type ComposeService struct {
 	StopSignal      string            `yaml:"stop_signal,omitempty"`
 	StopGracePeriod string            `yaml:"stop_grace_period,omitempty"`
 	Logging         any               `yaml:"logging,omitempty"`
+	Expose          []string          `yaml:"expose,omitempty"`
 	ExtraHosts      []string          `yaml:"extra_hosts,omitempty"`
 	Entrypoint      any               `yaml:"entrypoint,omitempty"`
 	WorkingDir      string            `yaml:"working_dir,omitempty"`
@@ -172,12 +173,41 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 }
 
 // hardenCompose injects security defaults into all services.
-func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config.ClientPolicy) []string {
+// portMappings are injected as host port bindings (from expose → allocated ports).
+func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config.ClientPolicy, portMappings []PortMapping) []string {
 	var modifications []string
 	hardening := cfg.GlobalHardening
 	networkName := fmt.Sprintf("opsen-%s-internal", client.Client)
 
+	// Build a lookup of allocated ports by service name
+	bindAddr := ""
+	if client.Compose != nil {
+		bindAddr = client.Compose.Network.IngressBindAddress
+	}
+	svcPorts := make(map[string][]PortMapping)
+	for _, m := range portMappings {
+		svcPorts[m.Service] = append(svcPorts[m.Service], m)
+	}
+
 	for name, svc := range compose.Services {
+		// Strip client-specified ports — the agent owns host port bindings
+		if len(svc.Ports) > 0 {
+			svc.Ports = nil
+			modifications = append(modifications, fmt.Sprintf("%s: removed client ports (agent manages port allocation)", name))
+		}
+
+		// Inject allocated port bindings from expose entries
+		if mappings, ok := svcPorts[name]; ok {
+			for _, m := range mappings {
+				binding := fmt.Sprintf("%s:%d:%s", bindAddr, m.HostPort, m.ContainerPort)
+				svc.Ports = append(svc.Ports, binding)
+			}
+			modifications = append(modifications, fmt.Sprintf("%s: allocated host ports from expose", name))
+		}
+
+		// Clear expose — it has been converted to port bindings
+		svc.Expose = nil
+
 		if hardening.NoNewPrivileges {
 			if !containsString(svc.SecurityOpt, "no-new-privileges:true") {
 				svc.SecurityOpt = append(svc.SecurityOpt, "no-new-privileges:true")
@@ -208,16 +238,27 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 			modifications = append(modifications, fmt.Sprintf("%s: set read_only true", name))
 		}
 
-		if len(hardening.DefaultTmpfs) > 0 {
-			var tmpfs []string
+		if len(hardening.DefaultTmpfs) > 0 || svc.Tmpfs != nil {
+			defaultPaths := make(map[string]bool)
+			var merged []string
+
 			for _, t := range hardening.DefaultTmpfs {
 				entry := t.Path
 				if t.Options != "" {
 					entry += ":" + t.Options
 				}
-				tmpfs = append(tmpfs, entry)
+				defaultPaths[t.Path] = true
+				merged = append(merged, entry)
 			}
-			svc.Tmpfs = tmpfs
+
+			for _, entry := range parseTmpfsEntries(svc.Tmpfs) {
+				path := strings.SplitN(entry, ":", 2)[0]
+				if !defaultPaths[path] {
+					merged = append(merged, entry)
+				}
+			}
+
+			svc.Tmpfs = merged
 			modifications = append(modifications, fmt.Sprintf("%s: set tmpfs", name))
 		}
 
@@ -349,6 +390,29 @@ func extractTag(image string) string {
 		return "latest"
 	}
 	return parts[1]
+}
+
+// parseTmpfsEntries extracts tmpfs mount strings from the any-typed Tmpfs field.
+// Docker Compose accepts tmpfs as a single string or a list of strings.
+func parseTmpfsEntries(v any) []string {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case string:
+		return []string{val}
+	case []string:
+		return val
+	case []any:
+		var entries []string
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				entries = append(entries, s)
+			}
+		}
+		return entries
+	}
+	return nil
 }
 
 func parseMemoryMb(mem string) int {

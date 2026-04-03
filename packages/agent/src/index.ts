@@ -34,7 +34,7 @@ export type { PlatformCA, IssuedCert } from './pki.js'
 
 // Dynamic resources
 export { ComposeProject } from './resources/compose-project.js'
-export type { ComposeProjectArgs } from './resources/compose-project.js'
+export type { ComposeProjectArgs, PortMappings } from './resources/compose-project.js'
 export { IngressRoutes } from './resources/ingress-routes.js'
 export type { IngressRoutesArgs, IngressRouteArgs } from './resources/ingress-routes.js'
 export { Database } from './resources/database.js'
