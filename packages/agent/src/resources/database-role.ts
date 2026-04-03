@@ -1,5 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
-import { type AgentConnection, agentRequest, checkResponse } from './client.js'
+import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface DatabaseRoleInputs {
   connection: AgentConnection

@@ -18,6 +18,7 @@ type Handler struct {
 	cfg         *config.AgentConfig
 	clientStore *config.ClientStore
 	tracker     *ResourceTracker
+	ports       *PortAllocator
 	logger      *slog.Logger
 }
 
@@ -28,7 +29,24 @@ func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger
 		logger.Warn("failed to load resource tracker, starting fresh", "error", err)
 		tracker = &ResourceTracker{path: trackerPath, Clients: make(map[string]*ClientResources), logger: logger}
 	}
-	return &Handler{cfg: cfg, clientStore: clientStore, tracker: tracker, logger: logger}
+
+	var ports *PortAllocator
+	if cfg.Roles.Compose.PortRange != "" {
+		portsPath := filepath.Join(cfg.Roles.Compose.DeploymentsDir, "port-state.json")
+		ports, err = NewPortAllocator(portsPath, cfg.Roles.Compose.PortRange, logger)
+		if err != nil {
+			logger.Warn("failed to load port allocator, starting fresh", "error", err)
+			min, max, _ := parsePortRange(cfg.Roles.Compose.PortRange)
+			ports = &PortAllocator{path: portsPath, logger: logger, rangeMin: min, rangeMax: max, Clients: make(map[string]map[string]*ProjectPorts)}
+		}
+	}
+
+	return &Handler{cfg: cfg, clientStore: clientStore, tracker: tracker, ports: ports, logger: logger}
+}
+
+// Reconciler returns a Reconciler that watches for policy changes and redeploys affected projects.
+func (h *Handler) Reconciler() *Reconciler {
+	return NewReconciler(h.cfg, h.clientStore, h.tracker, h.ports, h.logger)
 }
 
 // DeployRequest represents a file-based project deployment.
@@ -39,10 +57,11 @@ type DeployRequest struct {
 }
 
 type DeployResponse struct {
-	Status   string   `json:"status"`
-	Project  string   `json:"project"`
-	Services []string `json:"services,omitempty"`
-	Modified []string `json:"policy_modifications,omitempty"`
+	Status   string                       `json:"status"`
+	Project  string                       `json:"project"`
+	Services []string                     `json:"services,omitempty"`
+	Modified []string                     `json:"policy_modifications,omitempty"`
+	Ports    map[string]map[string]int    `json:"ports,omitempty"` // service -> container_port -> host_port
 }
 
 func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
@@ -97,8 +116,24 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Allocate host ports for exposed container ports
+	var portMappings []PortMapping
+	exposeRequests := extractExposeEntries(composeFile)
+	if len(exposeRequests) > 0 {
+		if h.ports == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "services use expose but no port_range configured in agent"})
+			return
+		}
+		var err error
+		portMappings, err = h.ports.Allocate(client.Client, projectSlug, exposeRequests)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("port allocation failed: %v", err)})
+			return
+		}
+	}
+
 	// Apply hardening and namespacing
-	modifications := hardenCompose(composeFile, h.cfg, client)
+	modifications := hardenCompose(composeFile, h.cfg, client, portMappings)
 
 	// Write all project files
 	projectName := fmt.Sprintf("opsen-%s-%s", client.Client, projectSlug)
@@ -156,8 +191,21 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track resources
+	// Track resources with current policy hash
+	requestedResources.PolicyHash = policyHash(client, h.cfg)
 	h.tracker.Set(client.Client, projectSlug, requestedResources)
+
+	// Build port mapping response: service -> container_port -> host_port
+	var portsResponse map[string]map[string]int
+	if len(portMappings) > 0 {
+		portsResponse = make(map[string]map[string]int)
+		for _, m := range portMappings {
+			if portsResponse[m.Service] == nil {
+				portsResponse[m.Service] = make(map[string]int)
+			}
+			portsResponse[m.Service][m.ContainerPort] = m.HostPort
+		}
+	}
 
 	h.logger.Info("deployed", "client", client.Client, "project", projectSlug, "services", services)
 	writeJSON(w, http.StatusOK, DeployResponse{
@@ -165,6 +213,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		Project:  projectName,
 		Services: services,
 		Modified: modifications,
+		Ports:    portsResponse,
 	})
 }
 
@@ -193,6 +242,9 @@ func (h *Handler) Destroy(w http.ResponseWriter, r *http.Request) {
 
 	os.RemoveAll(projectDir)
 	h.tracker.Remove(client.Client, projectSlug)
+	if h.ports != nil {
+		h.ports.Release(client.Client, projectSlug)
+	}
 
 	h.logger.Info("destroyed", "client", client.Client, "project", projectSlug)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "destroyed", "project": projectName})
@@ -259,17 +311,12 @@ func (h *Handler) statusAll(w http.ResponseWriter, client *config.ClientPolicy) 
 }
 
 func (h *Handler) composeUp(project, composePath string) ([]string, error) {
-	composeBin := h.cfg.Roles.Compose.ComposeBinary
-	parts := strings.Fields(composeBin)
-
-	args := append(parts[1:], "-p", project, "-f", composePath, "up", "-d", "--remove-orphans")
-	cmd := exec.Command(parts[0], args...)
-	cmd.Dir = filepath.Dir(composePath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %s", err, string(output))
+	if err := composeUp(h.cfg.Roles.Compose.ComposeBinary, project, composePath); err != nil {
+		return nil, err
 	}
 
+	composeBin := h.cfg.Roles.Compose.ComposeBinary
+	parts := strings.Fields(composeBin)
 	psArgs := append(parts[1:], "-p", project, "-f", composePath, "ps", "--services")
 	psCmd := exec.Command(parts[0], psArgs...)
 	psCmd.Dir = filepath.Dir(composePath)
@@ -283,6 +330,19 @@ func (h *Handler) composeUp(project, composePath string) ([]string, error) {
 	}
 
 	return services, nil
+}
+
+// composeUp runs docker compose up for a project. Used by both the handler and reconciler.
+func composeUp(composeBin, project, composePath string) error {
+	parts := strings.Fields(composeBin)
+	args := append(parts[1:], "-p", project, "-f", composePath, "up", "-d", "--remove-orphans")
+	cmd := exec.Command(parts[0], args...)
+	cmd.Dir = filepath.Dir(composePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %s", err, string(output))
+	}
+	return nil
 }
 
 func (h *Handler) composeDown(project, composePath string) error {

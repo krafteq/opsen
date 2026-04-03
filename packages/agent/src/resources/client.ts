@@ -5,7 +5,7 @@
  * is never captured by Pulumi's closure serializer.
  */
 
-import type { AgentConnection } from '../types.js'
+import type { AgentConnection } from '../types'
 
 export type { AgentConnection }
 

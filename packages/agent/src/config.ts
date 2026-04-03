@@ -1,5 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
-import type { AgentConfig, ClientPolicy } from './types.js'
+import type { AgentConfig, ClientPolicy } from './types'
 
 export function serializeAgentConfig(config: pulumi.Unwrap<AgentConfig>): string {
   const doc: Record<string, unknown> = {
@@ -29,6 +29,7 @@ export function serializeAgentConfig(config: pulumi.Unwrap<AgentConfig>): string
       compose_binary: c.composeBinary ?? 'docker compose',
       deployments_dir: c.deploymentsDir ?? '/var/lib/opsen-agent/deployments/',
       network_prefix: c.networkPrefix ?? 'opsen',
+      ...(c.portRange ? { port_range: c.portRange } : {}),
     }
   }
 

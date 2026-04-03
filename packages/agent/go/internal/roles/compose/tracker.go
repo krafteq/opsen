@@ -15,6 +15,7 @@ type ProjectResources struct {
 	Containers int     `json:"containers"`
 	MemoryMb   int     `json:"memory_mb"`
 	Cpus       float64 `json:"cpus"`
+	PolicyHash string  `json:"policy_hash,omitempty"` // hash of policy fields affecting deployment
 }
 
 // TotalResources is the aggregated usage across all projects for a client.

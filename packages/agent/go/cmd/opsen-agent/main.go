@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/opsen/agent/internal/config"
 	"github.com/opsen/agent/internal/server"
@@ -44,6 +45,12 @@ func main() {
 		monitor := dbHandler.Monitor()
 		go monitor.Run()
 		defer dbHandler.Close()
+	}
+
+	// Start compose policy reconciler if compose role is enabled
+	if ch := srv.ComposeHandler(); ch != nil {
+		reconciler := ch.Reconciler()
+		go reconciler.Run(10 * time.Second)
 	}
 
 	go func() {

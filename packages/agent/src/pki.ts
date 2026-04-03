@@ -1,6 +1,6 @@
 import * as pulumi from '@pulumi/pulumi'
 import * as tls from '@pulumi/tls'
-import type { PlatformCAArgs, AgentCertArgs, ClientCertArgs } from './types.js'
+import type { PlatformCAArgs, AgentCertArgs, ClientCertArgs } from './types'
 
 export interface PlatformCA {
   certPem: pulumi.Output<string>
