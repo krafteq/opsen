@@ -4,7 +4,6 @@
   "description": "Pulumi component for deploying the opsen deploy agent to VMs",
   "main": "src/index.ts",
   "types": "dist/index.d.ts",
-  "type": "module",
   "files": [
     "dist",
     "go",
@@ -17,6 +16,7 @@
     "test:watch": "vitest watch"
   },
   "dependencies": {
+    "@opsen/docker-compose": "workspace:^",
     "@pulumi/command": "^1.0.0",
     "@pulumi/pulumi": "^3.152.0",
     "@pulumi/tls": "^5.0.0"

@@ -146,6 +146,9 @@ importers:
 
   packages/agent:
     dependencies:
+      '@opsen/docker-compose':
+        specifier: workspace:^
+        version: link:../docker-compose
       '@pulumi/command':
         specifier: ^1.0.0
         version: 1.2.1(typescript@5.8.3)

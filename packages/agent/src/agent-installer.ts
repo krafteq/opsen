@@ -3,10 +3,11 @@ import * as command from '@pulumi/command'
 import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { MirrorState } from '@opsen/docker-compose'
 import { serializeAgentConfig, serializeClientPolicy } from './config.js'
 import type { AgentInstallerArgs } from './types.js'
 
-const GO_SRC_DIR = path.resolve(import.meta.dirname, '..', 'go')
+const GO_SRC_DIR = path.resolve(__dirname, '..', 'go')
 
 export class AgentInstaller extends pulumi.ComponentResource {
   declare readonly endpoint: pulumi.Output<string>
@@ -126,23 +127,29 @@ export class AgentInstaller extends pulumi.ComponentResource {
       { parent: this, dependsOn: [setup] },
     )
 
-    // ─── Write client policies ──────────────────────────
-    const clientResources = (args.clients ?? []).map((client) => {
-      const clientName = pulumi.output(client.name)
-      const policyYaml = pulumi.output(client).apply((c) => serializeClientPolicy(c))
-      const policyHash = policyYaml.apply((y) => hashString(y))
+    // ─── Write client policies via MirrorState ──────────
+    const clientFiles = pulumi.all((args.clients ?? []).map((c) => pulumi.output(c))).apply((clients) =>
+      clients.map((c) => ({
+        name: `${c.name}.yaml`,
+        parentPath: './' as const,
+        path: `./${c.name}.yaml`,
+        data: Buffer.from(serializeClientPolicy(c)),
+      })),
+    )
 
-      return new command.remote.Command(
-        `${name}-client-${client.name}`,
-        {
-          connection: conn,
-          create: pulumi.interpolate`cat > /etc/opsen-agent/clients/${clientName}.yaml << 'OPSENEOF'\n${policyYaml}\nOPSENEOF`,
-          delete: pulumi.interpolate`rm -f /etc/opsen-agent/clients/${clientName}.yaml`,
-          triggers: [policyHash],
-        },
-        { parent: this, dependsOn: [setup] },
-      )
-    })
+    const mirrorConn = pulumi
+      .all([pulumi.output(conn.host), pulumi.output(conn.privateKey!), pulumi.output(conn.user ?? 'root')])
+      .apply(([host, privateKey, user]) => ({ host, user, privateKey }))
+
+    const clientMirror = new MirrorState(
+      `${name}-clients`,
+      {
+        connection: mirrorConn,
+        files: clientFiles,
+        remotePath: '/etc/opsen-agent/clients',
+      },
+      { parent: this, dependsOn: [setup] },
+    )
 
     // ─── Systemd unit + start ───────────────────────────
     const systemdUnit = buildSystemdUnit(args)
@@ -165,7 +172,7 @@ journalctl -u opsen-agent --no-pager -n 30 >&2
 exit 1`,
         triggers: [restartTrigger],
       },
-      { parent: this, dependsOn: [chmod, agentConfig, ...tlsResources, ...clientResources] },
+      { parent: this, dependsOn: [chmod, agentConfig, ...tlsResources, clientMirror] },
     )
 
     // ─── Outputs ────────────────────────────────────────

@@ -108,7 +108,7 @@ The root `tsconfig.json` uses TypeScript project references (`composite: true`).
 
 The root `package.json` has `"type": "module"`. TypeScript uses `module: "nodenext"` / `moduleResolution: "node16"` (via `@tsconfig/node22`).
 
-**Do NOT add `"type": "module"` to sub-package `package.json` files.** Pulumi packages (`@pulumi/kubernetes`, `@pulumi/docker`, `@pulumi/azure-native`) lack proper ESM `exports` maps, so their deep subpath imports (e.g. `@pulumi/azure-native/network`, `@pulumi/kubernetes/types`) break under strict `nodenext` resolution when the consuming package has `type: "module"`. Only `@opsen/agent` and `@opsen/cert-renewer` have it because they don't use Pulumi deep imports.
+**Do NOT add `"type": "module"` to sub-package `package.json` files.** Pulumi packages (`@pulumi/kubernetes`, `@pulumi/docker`, `@pulumi/azure-native`) lack proper ESM `exports` maps, so their deep subpath imports (e.g. `@pulumi/azure-native/network`, `@pulumi/kubernetes/types`) break under strict `nodenext` resolution when the consuming package has `type: "module"`. No sub-package should have it — consistency and stability across the monorepo is more important than ESM purity.
 
 **Package setup** — every `package.json` under `packages/` MUST have:
 
