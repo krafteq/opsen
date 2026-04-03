@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto'
 
 const canRun = isPulumiAvailable()
 
-const GO_OUT_DIR = resolve(import.meta.dirname, '..', '..', 'go', 'out')
+const GO_OUT_DIR = resolve(__dirname, '..', '..', 'go', 'out')
 const BINARY_PATH = join(GO_OUT_DIR, 'opsen-agent')
 
 let stateDir: string
@@ -52,7 +52,7 @@ describe.skipIf(!canRun)('AgentInstaller plan mode e2e', () => {
         projectName: 'opsen-agent-plan-e2e',
         stackName,
         program: async () => {
-          const { AgentInstaller } = await import('../agent-installer.js')
+          const { AgentInstaller } = await import('../agent-installer')
 
           new AgentInstaller('test-agent', {
             connection: {
@@ -107,7 +107,7 @@ describe.skipIf(!canRun)('AgentInstaller plan mode e2e', () => {
         projectName: 'opsen-agent-plan-e2e',
         stackName,
         program: async () => {
-          const { AgentInstaller } = await import('../agent-installer.js')
+          const { AgentInstaller } = await import('../agent-installer')
 
           new AgentInstaller('test-agent', {
             connection: {

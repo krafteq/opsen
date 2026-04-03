@@ -1,6 +1,6 @@
 import * as pulumi from '@pulumi/pulumi'
-import type { DatabaseLimitsArgs, DatabaseOwnerArgs } from '../types.js'
-import { type AgentConnection, agentRequest, checkResponse } from './client.js'
+import type { DatabaseLimitsArgs, DatabaseOwnerArgs } from '../types'
+import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface DatabaseInputs {
   connection: AgentConnection

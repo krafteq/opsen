@@ -4,10 +4,10 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { MirrorState } from '@opsen/docker-compose'
-import { serializeAgentConfig, serializeClientPolicy } from './config.js'
-import type { AgentInstallerArgs } from './types.js'
+import { serializeAgentConfig, serializeClientPolicy } from './config'
+import type { AgentInstallerArgs } from './types'
 
-const GO_SRC_DIR = path.resolve(import.meta.dirname, '..', 'go')
+const GO_SRC_DIR = path.resolve(__dirname, '..', 'go')
 
 /** Wraps a shell command with sudo when the SSH user is not root. */
 function sudo(connUser: pulumi.Input<string> | undefined, cmd: string): pulumi.Output<string> {

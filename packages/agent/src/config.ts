@@ -1,5 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
-import type { AgentConfig, ClientPolicy } from './types.js'
+import type { AgentConfig, ClientPolicy } from './types'
 
 export function serializeAgentConfig(config: pulumi.Unwrap<AgentConfig>): string {
   const doc: Record<string, unknown> = {
