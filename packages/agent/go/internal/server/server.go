@@ -17,11 +17,12 @@ import (
 )
 
 type Server struct {
-	httpServer  *http.Server
-	cfg         *config.AgentConfig
-	clientStore *config.ClientStore
-	logger      *slog.Logger
-	dbHandler   *dbRole.Handler
+	httpServer     *http.Server
+	cfg            *config.AgentConfig
+	clientStore    *config.ClientStore
+	logger         *slog.Logger
+	dbHandler      *dbRole.Handler
+	composeHandler *compose.Handler
 }
 
 func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.Logger) (*Server, error) {
@@ -34,12 +35,13 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 	})
 
 	// Compose role (Docker Compose project deployments)
+	var composeHandler *compose.Handler
 	if cfg.Roles.Compose != nil {
-		ch := compose.NewHandler(cfg, clientStore, logger)
-		mux.HandleFunc("PUT /v1/compose/projects/{project}", withClient(clientStore, logger, ch.Deploy))
-		mux.HandleFunc("DELETE /v1/compose/projects/{project}", withClient(clientStore, logger, ch.Destroy))
-		mux.HandleFunc("GET /v1/compose/projects/{project}", withClient(clientStore, logger, ch.Status))
-		mux.HandleFunc("GET /v1/compose/projects", withClient(clientStore, logger, ch.Status))
+		composeHandler = compose.NewHandler(cfg, clientStore, logger)
+		mux.HandleFunc("PUT /v1/compose/projects/{project}", withClient(clientStore, logger, composeHandler.Deploy))
+		mux.HandleFunc("DELETE /v1/compose/projects/{project}", withClient(clientStore, logger, composeHandler.Destroy))
+		mux.HandleFunc("GET /v1/compose/projects/{project}", withClient(clientStore, logger, composeHandler.Status))
+		mux.HandleFunc("GET /v1/compose/projects", withClient(clientStore, logger, composeHandler.Status))
 		logger.Info("compose role enabled")
 	}
 
@@ -101,17 +103,23 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 	}
 
 	return &Server{
-		httpServer:  httpServer,
-		cfg:         cfg,
-		clientStore: clientStore,
-		logger:      logger,
-		dbHandler:   dbHandler,
+		httpServer:     httpServer,
+		cfg:            cfg,
+		clientStore:    clientStore,
+		logger:         logger,
+		dbHandler:      dbHandler,
+		composeHandler: composeHandler,
 	}, nil
 }
 
 // DbHandler returns the db role handler, if enabled. Used to start the size monitor.
 func (s *Server) DbHandler() *dbRole.Handler {
 	return s.dbHandler
+}
+
+// ComposeHandler returns the compose role handler, if enabled. Used to start the reconciler.
+func (s *Server) ComposeHandler() *compose.Handler {
+	return s.composeHandler
 }
 
 func (s *Server) ListenAndServeTLS() error {

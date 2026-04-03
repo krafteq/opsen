@@ -44,6 +44,11 @@ func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger
 	return &Handler{cfg: cfg, clientStore: clientStore, tracker: tracker, ports: ports, logger: logger}
 }
 
+// Reconciler returns a Reconciler that watches for policy changes and redeploys affected projects.
+func (h *Handler) Reconciler() *Reconciler {
+	return NewReconciler(h.cfg, h.clientStore, h.tracker, h.ports, h.logger)
+}
+
 // DeployRequest represents a file-based project deployment.
 // Files is a map of relative path -> content.
 // The project name comes from the URL path, not the request body.
@@ -186,7 +191,8 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track resources
+	// Track resources with current policy hash
+	requestedResources.PolicyHash = policyHash(client, h.cfg)
 	h.tracker.Set(client.Client, projectSlug, requestedResources)
 
 	// Build port mapping response: service -> container_port -> host_port
@@ -305,17 +311,12 @@ func (h *Handler) statusAll(w http.ResponseWriter, client *config.ClientPolicy) 
 }
 
 func (h *Handler) composeUp(project, composePath string) ([]string, error) {
-	composeBin := h.cfg.Roles.Compose.ComposeBinary
-	parts := strings.Fields(composeBin)
-
-	args := append(parts[1:], "-p", project, "-f", composePath, "up", "-d", "--remove-orphans")
-	cmd := exec.Command(parts[0], args...)
-	cmd.Dir = filepath.Dir(composePath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %s", err, string(output))
+	if err := composeUp(h.cfg.Roles.Compose.ComposeBinary, project, composePath); err != nil {
+		return nil, err
 	}
 
+	composeBin := h.cfg.Roles.Compose.ComposeBinary
+	parts := strings.Fields(composeBin)
 	psArgs := append(parts[1:], "-p", project, "-f", composePath, "ps", "--services")
 	psCmd := exec.Command(parts[0], psArgs...)
 	psCmd.Dir = filepath.Dir(composePath)
@@ -329,6 +330,19 @@ func (h *Handler) composeUp(project, composePath string) ([]string, error) {
 	}
 
 	return services, nil
+}
+
+// composeUp runs docker compose up for a project. Used by both the handler and reconciler.
+func composeUp(composeBin, project, composePath string) error {
+	parts := strings.Fields(composeBin)
+	args := append(parts[1:], "-p", project, "-f", composePath, "up", "-d", "--remove-orphans")
+	cmd := exec.Command(parts[0], args...)
+	cmd.Dir = filepath.Dir(composePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %s", err, string(output))
+	}
+	return nil
 }
 
 func (h *Handler) composeDown(project, composePath string) error {
