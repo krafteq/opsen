@@ -1,5 +1,6 @@
 ---
 '@opsen/platform': minor
+'@opsen/agent': minor
 '@opsen/powerdns': minor
 '@opsen/docker-compose': minor
 '@opsen/k8s-ops': minor

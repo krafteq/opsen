@@ -1,4 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
+import type { AgentConnectionArgs } from '../types'
 import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface IngressRoute {
@@ -101,7 +102,7 @@ export interface IngressRouteArgs {
 }
 
 export interface IngressRoutesArgs {
-  connection: pulumi.Input<AgentConnection>
+  connection: pulumi.Input<AgentConnectionArgs>
   routes: pulumi.Input<pulumi.Input<IngressRouteArgs>[]>
 }
 

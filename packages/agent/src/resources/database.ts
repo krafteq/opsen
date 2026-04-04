@@ -1,5 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
-import type { DatabaseLimitsArgs, DatabaseOwnerArgs } from '../types'
+import type { AgentConnectionArgs, DatabaseLimitsArgs, DatabaseOwnerArgs } from '../types'
 import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface DatabaseInputs {
@@ -92,7 +92,7 @@ const databaseProvider: pulumi.dynamic.ResourceProvider = {
 }
 
 export interface DatabaseArgs {
-  connection: pulumi.Input<AgentConnection>
+  connection: pulumi.Input<AgentConnectionArgs>
   name: pulumi.Input<string>
   owner: pulumi.Input<DatabaseOwnerArgs>
   limits?: pulumi.Input<DatabaseLimitsArgs>

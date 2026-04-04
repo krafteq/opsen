@@ -15,57 +15,57 @@ export interface AgentConfig {
 }
 
 export interface AgentRoles {
-  compose?: ComposeRoleConfig
-  ingress?: IngressRoleConfig
-  db?: DbRoleConfig
+  compose?: pulumi.Input<ComposeRoleConfig>
+  ingress?: pulumi.Input<IngressRoleConfig>
+  db?: pulumi.Input<DbRoleConfig>
 }
 
 export interface ComposeRoleConfig {
-  composeBinary?: string
-  deploymentsDir?: string
-  networkPrefix?: string
+  composeBinary?: pulumi.Input<string>
+  deploymentsDir?: pulumi.Input<string>
+  networkPrefix?: pulumi.Input<string>
   /** Host port range for exposed container ports, e.g. "8000-8999" */
-  portRange?: string
+  portRange?: pulumi.Input<string>
 }
 
 export interface IngressRoleConfig {
-  driver: 'traefik' | 'caddy'
-  configDir: string
-  reloadCommand?: string
+  driver: pulumi.Input<'traefik' | 'caddy'>
+  configDir: pulumi.Input<string>
+  reloadCommand?: pulumi.Input<string>
 }
 
 export interface DbRoleConfig {
-  host: string
-  port: number
-  adminUser: string
-  adminPasswordFile: string
-  defaultEncoding?: string
-  defaultLocale?: string
-  sizeCheckInterval?: number
-  sslMode?: 'disable' | 'require' | 'verify-ca' | 'verify-full'
-  dataDir?: string
+  host: pulumi.Input<string>
+  port: pulumi.Input<number>
+  adminUser: pulumi.Input<string>
+  adminPasswordFile: pulumi.Input<string>
+  defaultEncoding?: pulumi.Input<string>
+  defaultLocale?: pulumi.Input<string>
+  sizeCheckInterval?: pulumi.Input<number>
+  sslMode?: pulumi.Input<'disable' | 'require' | 'verify-ca' | 'verify-full'>
+  dataDir?: pulumi.Input<string>
 }
 
 export interface GlobalHardening {
-  noNewPrivileges?: boolean
-  capDropAll?: boolean
-  readOnlyRootfs?: boolean
-  defaultUser?: string
-  defaultTmpfs?: TmpfsMount[]
-  pidLimit?: number
+  noNewPrivileges?: pulumi.Input<boolean>
+  capDropAll?: pulumi.Input<boolean>
+  readOnlyRootfs?: pulumi.Input<boolean>
+  defaultUser?: pulumi.Input<string>
+  defaultTmpfs?: pulumi.Input<pulumi.Input<TmpfsMount>[]>
+  pidLimit?: pulumi.Input<number>
 }
 
 export interface TmpfsMount {
-  path: string
-  options?: string
+  path: pulumi.Input<string>
+  options?: pulumi.Input<string>
 }
 
 export interface DenyRules {
-  privileged?: boolean
-  networkModes?: string[]
-  pidMode?: string
-  ipcMode?: string
-  hostPaths?: string[]
+  privileged?: pulumi.Input<boolean>
+  networkModes?: pulumi.Input<pulumi.Input<string>[]>
+  pidMode?: pulumi.Input<string>
+  ipcMode?: pulumi.Input<string>
+  hostPaths?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 // ── Client Policy ───────────────────────────────────────
@@ -81,157 +81,166 @@ export interface ClientPolicy {
 // Resource limits are enforced across ALL projects for the client.
 export interface ComposePolicy {
   // Cross-project resource limits
-  maxContainers?: number
-  maxMemoryMb?: number
-  maxCpus?: number
-  maxProjects?: number
+  maxContainers?: pulumi.Input<number>
+  maxMemoryMb?: pulumi.Input<number>
+  maxCpus?: pulumi.Input<number>
+  maxProjects?: pulumi.Input<number>
 
   // Per-container defaults and limits
-  perContainer?: PerContainerLimits
+  perContainer?: pulumi.Input<PerContainerLimits>
 
   // Per-project limits
-  maxServices?: number
-  allowBuild?: boolean
-  allowEnvFile?: boolean
+  maxServices?: pulumi.Input<number>
+  allowBuild?: pulumi.Input<boolean>
+  allowEnvFile?: pulumi.Input<boolean>
 
   // Policies
-  network?: ComposeNetworkPolicy
-  volumes?: ComposeVolumePolicy
-  images?: ImagePolicy
-  capabilities?: CapabilityPolicy
+  network?: pulumi.Input<ComposeNetworkPolicy>
+  volumes?: pulumi.Input<ComposeVolumePolicy>
+  images?: pulumi.Input<ImagePolicy>
+  capabilities?: pulumi.Input<CapabilityPolicy>
 }
 
 export interface PerContainerLimits {
-  defaultMemoryMb?: number
-  defaultCpus?: number
-  maxMemoryMb?: number
-  maxCpus?: number
-  maxPids?: number
+  defaultMemoryMb?: pulumi.Input<number>
+  defaultCpus?: pulumi.Input<number>
+  maxMemoryMb?: pulumi.Input<number>
+  maxCpus?: pulumi.Input<number>
+  maxPids?: pulumi.Input<number>
 }
 
 export interface ComposeNetworkPolicy {
-  internetAccess?: boolean
-  allowedEgress?: string[]
-  ingressPortRange?: string
-  ingressBindAddress?: string
+  internetAccess?: pulumi.Input<boolean>
+  allowedEgress?: pulumi.Input<pulumi.Input<string>[]>
+  ingressPortRange?: pulumi.Input<string>
+  ingressBindAddress?: pulumi.Input<string>
 }
 
 export interface ComposeVolumePolicy {
-  allowedHostPaths?: string[]
-  maxVolumeCount?: number
+  allowedHostPaths?: pulumi.Input<pulumi.Input<string>[]>
+  maxVolumeCount?: pulumi.Input<number>
 }
 
 export interface ImagePolicy {
-  allowedRegistries?: string[]
-  denyTags?: string[]
+  allowedRegistries?: pulumi.Input<pulumi.Input<string>[]>
+  denyTags?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 export interface CapabilityPolicy {
-  allowed?: string[]
+  allowed?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 export interface IngressPolicy {
-  maxRoutes?: number
-  domains?: DomainPolicy
-  tls?: TlsPolicy
-  upstreams?: UpstreamPolicy
-  headers?: HeaderPolicy
-  rateLimiting?: RateLimitPolicy
-  middleware?: MiddlewarePolicy
+  maxRoutes?: pulumi.Input<number>
+  domains?: pulumi.Input<DomainPolicy>
+  tls?: pulumi.Input<TlsPolicy>
+  upstreams?: pulumi.Input<UpstreamPolicy>
+  headers?: pulumi.Input<HeaderPolicy>
+  rateLimiting?: pulumi.Input<RateLimitPolicy>
+  middleware?: pulumi.Input<MiddlewarePolicy>
 }
 
 export interface DomainPolicy {
-  allowed?: string[]
-  denied?: string[]
+  allowed?: pulumi.Input<pulumi.Input<string>[]>
+  denied?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 export interface TlsPolicy {
-  acmeChallenge?: 'http' | 'dns' | 'tls-alpn'
-  acmeProvider?: 'letsencrypt' | 'zerossl' | 'custom'
-  allowCustomCerts?: boolean
-  minTlsVersion?: '1.2' | '1.3'
+  acmeChallenge?: pulumi.Input<'http' | 'dns' | 'tls-alpn'>
+  acmeProvider?: pulumi.Input<'letsencrypt' | 'zerossl' | 'custom'>
+  allowCustomCerts?: pulumi.Input<boolean>
+  minTlsVersion?: pulumi.Input<'1.2' | '1.3'>
 }
 
 export interface UpstreamPolicy {
-  allowedTargets?: string[]
-  denyTargets?: string[]
+  allowedTargets?: pulumi.Input<pulumi.Input<string>[]>
+  denyTargets?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 export interface HeaderPolicy {
-  forceHsts?: boolean
-  forceXssProtection?: boolean
-  allowCustomHeaders?: boolean
+  forceHsts?: pulumi.Input<boolean>
+  forceXssProtection?: pulumi.Input<boolean>
+  allowCustomHeaders?: pulumi.Input<boolean>
 }
 
 export interface RateLimitPolicy {
-  enabled?: boolean
-  defaultRps?: number
-  maxRps?: number
+  enabled?: pulumi.Input<boolean>
+  defaultRps?: pulumi.Input<number>
+  maxRps?: pulumi.Input<number>
 }
 
 export interface MiddlewarePolicy {
-  allowed?: string[]
-  denied?: string[]
+  allowed?: pulumi.Input<pulumi.Input<string>[]>
+  denied?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 // ── Database Policy ─────────────────────────────────────
 
 export interface DbPolicy {
-  maxDatabases?: number
-  maxTotalSizeMb?: number
-  maxTotalConnections?: number
-  perDatabase?: PerDatabaseLimits
-  roleLimits?: RoleLimitBounds
-  password?: DbPasswordPolicy
-  username?: DbUsernamePolicy
-  extensions?: DbExtensionPolicy
-  access?: DbAccessPolicy
+  maxDatabases?: pulumi.Input<number>
+  maxTotalSizeMb?: pulumi.Input<number>
+  maxTotalConnections?: pulumi.Input<number>
+  perDatabase?: pulumi.Input<PerDatabaseLimits>
+  roleLimits?: pulumi.Input<RoleLimitBounds>
+  password?: pulumi.Input<DbPasswordPolicy>
+  username?: pulumi.Input<DbUsernamePolicy>
+  extensions?: pulumi.Input<DbExtensionPolicy>
+  access?: pulumi.Input<DbAccessPolicy>
 }
 
 export interface PerDatabaseLimits {
-  maxSizeMb?: number
-  maxConnectionLimit?: number
-  maxRoles?: number
+  maxSizeMb?: pulumi.Input<number>
+  maxConnectionLimit?: pulumi.Input<number>
+  maxRoles?: pulumi.Input<number>
 }
 
 export interface RoleLimitBounds {
-  maxWorkMem?: string
-  maxTempFileLimit?: string
-  minStatementTimeout?: string
-  maxStatementTimeout?: string
+  maxWorkMem?: pulumi.Input<string>
+  maxTempFileLimit?: pulumi.Input<string>
+  minStatementTimeout?: pulumi.Input<string>
+  maxStatementTimeout?: pulumi.Input<string>
 }
 
 export interface DbPasswordPolicy {
-  minLength?: number
-  requireUppercase?: boolean
-  requireLowercase?: boolean
-  requireDigit?: boolean
-  requireSpecial?: boolean
-  denyUsernameInPassword?: boolean
+  minLength?: pulumi.Input<number>
+  requireUppercase?: pulumi.Input<boolean>
+  requireLowercase?: pulumi.Input<boolean>
+  requireDigit?: pulumi.Input<boolean>
+  requireSpecial?: pulumi.Input<boolean>
+  denyUsernameInPassword?: pulumi.Input<boolean>
 }
 
 export interface DbUsernamePolicy {
-  deniedNames?: string[]
-  deniedPrefixes?: string[]
-  requiredPrefix?: string
-  maxLength?: number
+  deniedNames?: pulumi.Input<pulumi.Input<string>[]>
+  deniedPrefixes?: pulumi.Input<pulumi.Input<string>[]>
+  requiredPrefix?: pulumi.Input<string>
+  maxLength?: pulumi.Input<number>
 }
 
 export interface DbExtensionPolicy {
-  allowed?: string[]
+  allowed?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 export interface DbAccessPolicy {
-  allowedHosts?: string[]
+  allowedHosts?: pulumi.Input<pulumi.Input<string>[]>
 }
 
 // ── Agent Connection (for dynamic resources) ───────────
 
+/** Plain connection type — used by provider internals after Input resolution. */
 export interface AgentConnection {
   endpoint: string
   caCert: string
   clientCert: string
   clientKey: string
+}
+
+/** Input-wrapped connection — allows consumers to pass Outputs for individual fields. */
+export interface AgentConnectionArgs {
+  endpoint: pulumi.Input<string>
+  caCert: pulumi.Input<string>
+  clientCert: pulumi.Input<string>
+  clientKey: pulumi.Input<string>
 }
 
 // ── Database Resource Args ─────────────────────────────
@@ -253,21 +262,21 @@ export interface DatabaseLimitsArgs {
 
 export interface AgentInstallerArgs {
   connection: ConnectionArgs
-  config: AgentConfig
-  clients?: ClientPolicy[]
-  tls: {
+  config: pulumi.Input<AgentConfig>
+  clients?: pulumi.Input<ClientPolicy>[]
+  tls: pulumi.Input<{
     ca: pulumi.Input<string>
     cert: pulumi.Input<string>
     key: pulumi.Input<string>
-  }
+  }>
 }
 
 // ── PKI Args ────────────────────────────────────────────
 
 export interface PlatformCAArgs {
-  commonName?: string
-  organization?: string
-  validityHours?: number
+  commonName?: pulumi.Input<string>
+  organization?: pulumi.Input<string>
+  validityHours?: pulumi.Input<number>
 }
 
 export interface AgentCertArgs {
@@ -276,12 +285,12 @@ export interface AgentCertArgs {
   commonName: pulumi.Input<string>
   ipAddresses?: pulumi.Input<pulumi.Input<string>[]>
   dnsNames?: pulumi.Input<pulumi.Input<string>[]>
-  validityHours?: number
+  validityHours?: pulumi.Input<number>
 }
 
 export interface ClientCertArgs {
   caCertPem: pulumi.Input<string>
   caPrivateKeyPem: pulumi.Input<string>
   clientName: pulumi.Input<string>
-  validityHours?: number
+  validityHours?: pulumi.Input<number>
 }

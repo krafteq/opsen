@@ -1,4 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
+import type { AgentConnectionArgs } from '../types'
 import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface ComposeProjectInputs {
@@ -58,7 +59,7 @@ const composeProjectProvider: pulumi.dynamic.ResourceProvider = {
 }
 
 export interface ComposeProjectArgs {
-  connection: pulumi.Input<AgentConnection>
+  connection: pulumi.Input<AgentConnectionArgs>
   project: pulumi.Input<string>
   files: pulumi.Input<Record<string, pulumi.Input<string>>>
 }
