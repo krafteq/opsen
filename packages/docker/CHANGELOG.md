@@ -1,5 +1,12 @@
 # @opsen/docker
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [0d8136d]
+  - @opsen/platform@0.4.0
+
 ## 0.2.0
 
 ### Minor Changes

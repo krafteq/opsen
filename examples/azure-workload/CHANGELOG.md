@@ -1,5 +1,13 @@
 # azure-workload-example
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [0d8136d]
+  - @opsen/platform@0.4.0
+  - @opsen/azure@0.4.1
+
 ## 0.1.2
 
 ### Patch Changes

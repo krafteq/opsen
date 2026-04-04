@@ -1,5 +1,18 @@
 # @opsen/agent
 
+## 0.4.0
+
+### Minor Changes
+
+- 541e039: Add app-scoped ingress routes. Each Pulumi project can now independently manage its own routes within a shared client connection by specifying an `app` name. New API endpoints: `PUT/GET /v1/ingress/apps/{app}/routes` and `DELETE /v1/ingress/apps/{app}`. Legacy endpoints remain backwards-compatible using `_default` app. MaxRoutes policy is enforced across all apps for the client.
+- 0d8136d: Wrap all resource Args fields with `pulumi.Input<>` for consumer flexibility. Arrays and Records are double-wrapped (e.g. `pulumi.Input<pulumi.Input<string>[]>`). Consumers can now pass Outputs directly without `.apply()` wrappers.
+
+### Patch Changes
+
+- 40cd22f: Fix dependency vulnerabilities: upgrade node-forge to 1.4.0 (4 high CVEs in cert chain verification, Ed25519/RSA signature forgery, DoS) and Go toolchain to 1.24.13 (14 stdlib CVEs in crypto/tls, crypto/x509, net/url, encoding/asn1, os/exec, database/sql).
+- Updated dependencies [0d8136d]
+  - @opsen/docker-compose@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes

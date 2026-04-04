@@ -1,5 +1,11 @@
 # @opsen/cert-renewer
 
+## 0.2.2
+
+### Patch Changes
+
+- 40cd22f: Fix dependency vulnerabilities: upgrade node-forge to 1.4.0 (4 high CVEs in cert chain verification, Ed25519/RSA signature forgery, DoS) and Go toolchain to 1.24.13 (14 stdlib CVEs in crypto/tls, crypto/x509, net/url, encoding/asn1, os/exec, database/sql).
+
 ## 0.2.1
 
 ### Patch Changes

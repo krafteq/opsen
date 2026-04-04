@@ -1,5 +1,11 @@
 # @opsen/platform
 
+## 0.4.0
+
+### Minor Changes
+
+- 0d8136d: Wrap all resource Args fields with `pulumi.Input<>` for consumer flexibility. Arrays and Records are double-wrapped (e.g. `pulumi.Input<pulumi.Input<string>[]>`). Consumers can now pass Outputs directly without `.apply()` wrappers.
+
 ## 0.3.1
 
 ### Patch Changes
