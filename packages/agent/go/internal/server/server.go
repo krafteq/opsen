@@ -66,9 +66,17 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 	// Ingress role
 	if cfg.Roles.Ingress != nil {
 		ih := ingress.NewHandler(cfg, clientStore, logger)
+
+		// App-scoped endpoints
+		mux.HandleFunc("PUT /v1/ingress/apps/{app}/routes", withClient(clientStore, logger, ih.UpdateAppRoutes))
+		mux.HandleFunc("GET /v1/ingress/apps/{app}/routes", withClient(clientStore, logger, ih.ListAppRoutes))
+		mux.HandleFunc("DELETE /v1/ingress/apps/{app}", withClient(clientStore, logger, ih.DeleteApp))
+
+		// Legacy endpoints (backwards compat, use _default app)
 		mux.HandleFunc("PUT /v1/ingress/routes", withClient(clientStore, logger, ih.UpdateRoutes))
 		mux.HandleFunc("DELETE /v1/ingress/routes/{name}", withClient(clientStore, logger, ih.DeleteRoute))
 		mux.HandleFunc("GET /v1/ingress/routes", withClient(clientStore, logger, ih.ListRoutes))
+
 		logger.Info("ingress role enabled")
 	}
 

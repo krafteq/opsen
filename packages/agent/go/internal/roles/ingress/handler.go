@@ -55,59 +55,65 @@ type CORSConfig struct {
 	Methods []string `json:"methods"`
 }
 
-func (h *Handler) UpdateRoutes(w http.ResponseWriter, r *http.Request) {
-	client := identity.ClientFromContext(r.Context())
-	if client.Ingress == nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "ingress role not allowed for this client"})
+// ── App-scoped endpoints ────────────────────────────────
+
+// UpdateAppRoutes replaces all routes for a specific app within the client.
+func (h *Handler) UpdateAppRoutes(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	if !isValidAppName(app) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid app name"})
 		return
 	}
-
-	var req RouteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	// Validate routes against policy
-	violations := h.validateRoutes(req.Routes, client.Ingress)
-	if len(violations) > 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":      "policy violations",
-			"violations": violations,
-		})
-		return
-	}
-
-	// Inject platform defaults
-	modifications := h.injectDefaults(req.Routes, client.Ingress)
-
-	// Generate and write config
-	if err := h.driver.WriteConfig(client.Client, req.Routes); err != nil {
-		h.logger.Error("failed to write ingress config", "client", client.Client, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write config"})
-		return
-	}
-
-	// Reload if needed
-	if err := h.driver.Reload(); err != nil {
-		h.logger.Error("failed to reload ingress", "client", client.Client, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reload ingress"})
-		return
-	}
-
-	h.logger.Info("ingress updated", "client", client.Client, "routes", len(req.Routes))
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":              "updated",
-		"routes":              len(req.Routes),
-		"policy_modifications": modifications,
-	})
+	h.updateRoutesForApp(w, r, app)
 }
 
+// ListAppRoutes lists routes for a specific app within the client.
+func (h *Handler) ListAppRoutes(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	if !isValidAppName(app) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid app name"})
+		return
+	}
+	h.listRoutesForApp(w, r, app)
+}
+
+// DeleteApp deletes all routes for a specific app within the client.
+func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
+	client := identity.ClientFromContext(r.Context())
+	app := r.PathValue("app")
+	if !isValidAppName(app) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid app name"})
+		return
+	}
+
+	if err := h.driver.DeleteApp(client.Client, app); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to delete app: %v", err)})
+		return
+	}
+
+	if err := h.driver.Reload(); err != nil {
+		h.logger.Error("failed to reload after app delete", "error", err)
+	}
+
+	h.logger.Info("app deleted", "client", client.Client, "app", app)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "app": app})
+}
+
+// ── Legacy endpoints (backwards compat, use app="_default") ─
+
+const defaultApp = "_default"
+
+// UpdateRoutes replaces all routes for the default app (legacy endpoint).
+func (h *Handler) UpdateRoutes(w http.ResponseWriter, r *http.Request) {
+	h.updateRoutesForApp(w, r, defaultApp)
+}
+
+// DeleteRoute deletes routes for the default app (legacy endpoint).
 func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 	client := identity.ClientFromContext(r.Context())
 	routeName := r.PathValue("name")
 
-	if err := h.driver.DeleteRoute(client.Client, routeName); err != nil {
+	if err := h.driver.DeleteRoute(client.Client, defaultApp, routeName); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to delete route: %v", err)})
 		return
 	}
@@ -120,23 +126,85 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "route": routeName})
 }
 
+// ListRoutes lists routes for the default app (legacy endpoint).
 func (h *Handler) ListRoutes(w http.ResponseWriter, r *http.Request) {
+	h.listRoutesForApp(w, r, defaultApp)
+}
+
+// ── Internal shared logic ───────────────────────────────
+
+func (h *Handler) updateRoutesForApp(w http.ResponseWriter, r *http.Request, app string) {
+	client := identity.ClientFromContext(r.Context())
+	if client.Ingress == nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "ingress role not allowed for this client"})
+		return
+	}
+
+	var req RouteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	// Validate routes against policy (cross-app MaxRoutes check)
+	violations := h.validateRoutes(req.Routes, client.Ingress, client.Client, app)
+	if len(violations) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":      "policy violations",
+			"violations": violations,
+		})
+		return
+	}
+
+	// Inject platform defaults
+	modifications := h.injectDefaults(req.Routes, client.Ingress)
+
+	// Generate and write config
+	if err := h.driver.WriteConfig(client.Client, app, req.Routes); err != nil {
+		h.logger.Error("failed to write ingress config", "client", client.Client, "app", app, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write config"})
+		return
+	}
+
+	// Reload if needed
+	if err := h.driver.Reload(); err != nil {
+		h.logger.Error("failed to reload ingress", "client", client.Client, "app", app, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reload ingress"})
+		return
+	}
+
+	h.logger.Info("ingress updated", "client", client.Client, "app", app, "routes", len(req.Routes))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":               "updated",
+		"app":                  app,
+		"routes":               len(req.Routes),
+		"policy_modifications": modifications,
+	})
+}
+
+func (h *Handler) listRoutesForApp(w http.ResponseWriter, r *http.Request, app string) {
 	client := identity.ClientFromContext(r.Context())
 
-	routes, err := h.driver.ListRoutes(client.Client)
+	routes, err := h.driver.ListRoutes(client.Client, app)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to list routes: %v", err)})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"routes": routes})
+	writeJSON(w, http.StatusOK, map[string]any{"app": app, "routes": routes})
 }
 
-func (h *Handler) validateRoutes(routes []Route, pol *config.IngressPolicy) []string {
+func (h *Handler) validateRoutes(routes []Route, pol *config.IngressPolicy, clientName, app string) []string {
 	var violations []string
 
-	if pol.MaxRoutes > 0 && len(routes) > pol.MaxRoutes {
-		violations = append(violations, fmt.Sprintf("too many routes: %d (max %d)", len(routes), pol.MaxRoutes))
+	if pol.MaxRoutes > 0 {
+		// Cross-app MaxRoutes: count routes in all apps, subtract current app (being replaced), add new routes
+		totalExisting, _ := h.driver.CountAllRoutes(clientName)
+		currentAppRoutes, _ := h.driver.ListRoutes(clientName, app)
+		newTotal := totalExisting - len(currentAppRoutes) + len(routes)
+		if newTotal > pol.MaxRoutes {
+			violations = append(violations, fmt.Sprintf("too many routes: %d total across all apps (max %d)", newTotal, pol.MaxRoutes))
+		}
 	}
 
 	for _, route := range routes {
@@ -188,6 +256,26 @@ func (h *Handler) injectDefaults(routes []Route, pol *config.IngressPolicy) []st
 	}
 
 	return modifications
+}
+
+// isValidAppName validates app names: alphanumeric or underscore start,
+// then alphanumeric, hyphen, underscore, or dot. Max 63 characters.
+func isValidAppName(name string) bool {
+	if len(name) == 0 || len(name) > 63 {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+				return false
+			}
+		} else {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
