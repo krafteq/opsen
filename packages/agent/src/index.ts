@@ -19,6 +19,7 @@ export type {
   AgentCertArgs,
   ClientCertArgs,
   AgentConnection,
+  AgentConnectionArgs,
   DbRoleConfig,
   DbPolicy,
   PerDatabaseLimits,

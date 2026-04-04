@@ -1,5 +1,5 @@
 export { DockerCompose } from './docker-compose'
-export type { DockerComposeArgs, DockerComposeProjectArgs, ComposeFile } from './types'
+export type { DockerComposeArgs, DockerComposeProjectArgs, ComposeFileArgs } from './types'
 export { MirrorState } from './mirror-state'
 export type { MirrorStateInputs, File } from './mirror-state/types'
 export { createPostgresDatabase } from './postgres'

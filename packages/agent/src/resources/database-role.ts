@@ -1,4 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
+import type { AgentConnectionArgs } from '../types'
 import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface DatabaseRoleInputs {
@@ -75,7 +76,7 @@ const databaseRoleProvider: pulumi.dynamic.ResourceProvider = {
 }
 
 export interface DatabaseRoleArgs {
-  connection: pulumi.Input<AgentConnection>
+  connection: pulumi.Input<AgentConnectionArgs>
   database: pulumi.Input<string>
   role: pulumi.Input<string>
   password: pulumi.Input<string>

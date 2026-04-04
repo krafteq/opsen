@@ -127,7 +127,15 @@ export class AgentInstaller extends pulumi.ComponentResource {
     )
 
     // ─── Upload TLS certs ───────────────────────────────
-    const tlsResources = uploadTlsCerts(name, conn, connUser, args.tls, this, setup)
+    const tlsOutput = pulumi.output(args.tls)
+    const tlsResources = uploadTlsCerts(
+      name,
+      conn,
+      connUser,
+      { ca: tlsOutput.ca, cert: tlsOutput.cert, key: tlsOutput.key },
+      this,
+      setup,
+    )
 
     // ─── Write agent config ─────────────────────────────
     const configYaml = pulumi.output(args.config).apply((c) => serializeAgentConfig(c))
@@ -214,7 +222,7 @@ function uploadTlsCerts(
   name: string,
   conn: command.types.input.remote.ConnectionArgs,
   connUser: pulumi.Input<string> | undefined,
-  tls: AgentInstallerArgs['tls'],
+  tls: { ca: pulumi.Input<string>; cert: pulumi.Input<string>; key: pulumi.Input<string> },
   parent: pulumi.Resource,
   dependsOn: pulumi.Resource,
 ): command.remote.Command[] {

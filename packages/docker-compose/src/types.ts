@@ -1,16 +1,16 @@
-import type { Input, Output } from '@pulumi/pulumi'
+import type { Input } from '@pulumi/pulumi'
 import type { ConnectionArgs } from './connection'
 
 export interface DockerComposeProjectArgs {
-  remotePath: string | Output<string>
-  composeFile: string | Output<string>
-  files?: ComposeFile[]
-  environment?: Record<string, string | Output<string>>
+  remotePath: Input<string>
+  composeFile: Input<string>
+  files?: ComposeFileArgs[]
+  environment?: Record<string, Input<string>>
 }
 
-export interface ComposeFile {
+export interface ComposeFileArgs {
   path: string
-  content: string | Output<string>
+  content: Input<string>
 }
 
 export interface DockerComposeArgs {

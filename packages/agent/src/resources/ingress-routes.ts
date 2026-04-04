@@ -1,4 +1,5 @@
 import * as pulumi from '@pulumi/pulumi'
+import type { AgentConnectionArgs } from '../types'
 import { type AgentConnection, agentRequest, checkResponse } from './client'
 
 interface IngressRoute {
@@ -19,6 +20,7 @@ interface IngressRoute {
 
 interface IngressRoutesInputs {
   connection: AgentConnection
+  app: string
   routes: IngressRoute[]
 }
 
@@ -38,18 +40,18 @@ function toApiRoute(route: IngressRoute) {
 
 const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
   async create(inputs: IngressRoutesInputs) {
-    const resp = await agentRequest(inputs.connection, 'PUT', '/v1/ingress/routes', {
+    const resp = await agentRequest(inputs.connection, 'PUT', `/v1/ingress/apps/${inputs.app}/routes`, {
       routes: inputs.routes.map(toApiRoute),
     })
     checkResponse(resp, [200])
     return {
-      id: 'ingress-routes',
+      id: inputs.app,
       outs: { ...inputs, updateResult: resp.body },
     }
   },
 
   async read(id, props: IngressRoutesInputs) {
-    const resp = await agentRequest(props.connection, 'GET', '/v1/ingress/routes')
+    const resp = await agentRequest(props.connection, 'GET', `/v1/ingress/apps/${props.app}/routes`)
     if (resp.status === 404) {
       return { id: '', props: {} }
     }
@@ -57,7 +59,7 @@ const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
   },
 
   async update(_id, _olds: IngressRoutesInputs, news: IngressRoutesInputs) {
-    const resp = await agentRequest(news.connection, 'PUT', '/v1/ingress/routes', {
+    const resp = await agentRequest(news.connection, 'PUT', `/v1/ingress/apps/${news.app}/routes`, {
       routes: news.routes.map(toApiRoute),
     })
     checkResponse(resp, [200])
@@ -65,16 +67,17 @@ const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
   },
 
   async delete(_id, props: IngressRoutesInputs) {
-    for (const route of props.routes) {
-      const resp = await agentRequest(props.connection, 'DELETE', `/v1/ingress/routes/${route.name}`)
-      checkResponse(resp, [200, 404])
-    }
+    const resp = await agentRequest(props.connection, 'DELETE', `/v1/ingress/apps/${props.app}`)
+    checkResponse(resp, [200, 404])
   },
 
   async diff(_id, olds: IngressRoutesInputs, news: IngressRoutesInputs) {
     const replaces: string[] = []
     if (olds.connection.endpoint !== news.connection.endpoint) {
       replaces.push('connection')
+    }
+    if (olds.app !== news.app) {
+      replaces.push('app')
     }
 
     const changes = replaces.length > 0 || JSON.stringify(olds.routes) !== JSON.stringify(news.routes)
@@ -101,11 +104,14 @@ export interface IngressRouteArgs {
 }
 
 export interface IngressRoutesArgs {
-  connection: pulumi.Input<AgentConnection>
+  connection: pulumi.Input<AgentConnectionArgs>
+  /** App scope — each app manages its own set of routes independently within the same client. */
+  app: pulumi.Input<string>
   routes: pulumi.Input<pulumi.Input<IngressRouteArgs>[]>
 }
 
 export class IngressRoutes extends pulumi.dynamic.Resource {
+  declare readonly app: pulumi.Output<string>
   declare readonly routes: pulumi.Output<IngressRoute[]>
   declare readonly updateResult: pulumi.Output<unknown>
 
