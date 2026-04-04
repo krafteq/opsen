@@ -1,6 +1,6 @@
 {
   "name": "@opsen/agent",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Pulumi component for deploying the opsen deploy agent to VMs",
   "main": "src/index.ts",
   "types": "dist/index.d.ts",
