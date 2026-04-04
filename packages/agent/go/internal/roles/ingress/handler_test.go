@@ -536,6 +536,91 @@ func TestMultipleClients_Isolated(t *testing.T) {
 	}
 }
 
+func TestDeleteIdempotent_NoFile(t *testing.T) {
+	h, _ := testHandler(t)
+	mux := setupMux(h)
+	client := testClient("acme")
+
+	// Delete app that was never created — should return 200, not 500
+	rr := doMuxRequest(mux, "DELETE", "/v1/ingress/apps/nonexistent", nil, client)
+	if rr.Code != http.StatusOK {
+		t.Errorf("delete nonexistent app: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Legacy delete of route that was never created — should return 200, not 500
+	rr = doMuxRequest(mux, "DELETE", "/v1/ingress/routes/ghost", nil, client)
+	if rr.Code != http.StatusOK {
+		t.Errorf("legacy delete nonexistent route: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDeleteCleansUpLegacyFile(t *testing.T) {
+	h, configDir := testHandler(t)
+	mux := setupMux(h)
+	client := testClient("acme")
+
+	// Simulate a pre-app-scoping legacy config file: acme.conf (old naming)
+	legacyPath := filepath.Join(configDir, "acme.conf")
+	os.WriteFile(legacyPath, []byte("old.example.com {\n  reverse_proxy localhost:5000\n}\n"), 0644)
+
+	// Legacy DELETE should remove the old-style file
+	rr := doMuxRequest(mux, "DELETE", "/v1/ingress/routes/whatever", nil, client)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("legacy delete: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Error("expected old-style acme.conf to be deleted")
+	}
+}
+
+func TestDeleteAppCleansUpLegacyFile(t *testing.T) {
+	h, configDir := testHandler(t)
+	mux := setupMux(h)
+	client := testClient("acme")
+
+	// Simulate old-style config file
+	legacyPath := filepath.Join(configDir, "acme.conf")
+	os.WriteFile(legacyPath, []byte("old.example.com {\n  reverse_proxy localhost:5000\n}\n"), 0644)
+
+	// App-scoped DELETE should also clean up old-style file
+	rr := doMuxRequest(mux, "DELETE", "/v1/ingress/apps/_default", nil, client)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete _default: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Error("expected old-style acme.conf to be deleted by app delete")
+	}
+}
+
+func TestCountAllRoutes_IncludesLegacyFile(t *testing.T) {
+	h, configDir := testHandler(t)
+	mux := setupMux(h)
+	client := &config.ClientPolicy{
+		Client: "acme",
+		Ingress: &config.IngressPolicy{
+			MaxRoutes: 3,
+			Domains:   config.DomainPolicy{Allowed: []string{"*.example.com"}},
+		},
+	}
+
+	// Simulate a legacy config file with 2 domain blocks
+	legacyPath := filepath.Join(configDir, "acme.conf")
+	os.WriteFile(legacyPath, []byte("a.example.com {\n  reverse_proxy localhost:1\n}\nb.example.com {\n  reverse_proxy localhost:2\n}\n"), 0644)
+
+	// Try to add 2 more routes via app-scoped endpoint — total would be 4 > max 3
+	rr := doMuxRequest(mux, "PUT", "/v1/ingress/apps/newapp/routes", RouteRequest{
+		Routes: []Route{
+			{Name: "r1", Hosts: []string{"c.example.com"}, Upstream: "localhost:3000"},
+			{Name: "r2", Hosts: []string{"d.example.com"}, Upstream: "localhost:3001"},
+		},
+	}, client)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 (legacy routes counted toward max), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func contains(s, substr string) bool {
 	return bytes.Contains([]byte(s), []byte(substr))
 }
