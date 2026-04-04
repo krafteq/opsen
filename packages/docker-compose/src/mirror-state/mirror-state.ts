@@ -1,3 +1,4 @@
+import * as path from 'node:path'
 import { dynamic, type CustomResourceOptions } from '@pulumi/pulumi'
 
 import type { MirrorStateProviderInputs, MirrorStateInputs } from './types'
@@ -8,9 +9,8 @@ type CommonModule = typeof import('./common')
 // serialization. The dynamic provider runs plain Node.js (no tsx), so paths must
 // point to compiled .js files in dist/. When loaded via tsx from src/, remap accordingly.
 function resolveForDynamicProvider(relativePath: string): string {
-  let resolved = require.resolve(relativePath)
-  resolved = resolved.replace(/\.ts$/, '.js').replace(/\/src\//, '/dist/')
-  return resolved
+  const resolved = path.resolve(__dirname, relativePath)
+  return resolved.replace(/\/src\//, '/dist/') + '.js'
 }
 const serverPath = resolveForDynamicProvider('./server')
 const commonPath = resolveForDynamicProvider('./common')
