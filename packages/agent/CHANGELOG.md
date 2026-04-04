@@ -1,5 +1,11 @@
 # @opsen/agent
 
+## 0.4.1
+
+### Patch Changes
+
+- b12ce02: Make ingress delete operations idempotent — no longer returns 500 when config files don't exist or were already deleted. Also cleans up legacy pre-app-scoping config files (`{client}.conf`) during delete and includes them in MaxRoutes validation.
+
 ## 0.4.0
 
 ### Minor Changes
