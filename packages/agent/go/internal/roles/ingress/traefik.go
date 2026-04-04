@@ -31,15 +31,25 @@ func (d *TraefikDriver) WriteConfig(clientName string, app string, routes []Rout
 }
 
 func (d *TraefikDriver) DeleteRoute(clientName string, app string, routeName string) error {
-	return os.Remove(d.configPath(clientName, app))
+	return d.removeConfigs(clientName, app)
 }
 
 func (d *TraefikDriver) DeleteApp(clientName string, app string) error {
-	err := os.Remove(d.configPath(clientName, app))
-	if os.IsNotExist(err) {
-		return nil
+	return d.removeConfigs(clientName, app)
+}
+
+// removeConfigs removes the app-scoped config file and any legacy (pre-app-scoping) config file.
+// Both removals are idempotent — missing files are not errors.
+func (d *TraefikDriver) removeConfigs(clientName, app string) error {
+	for _, path := range []string{
+		d.configPath(clientName, app),                            // new: {client}--{app}.yml
+		filepath.Join(d.configDir, clientName+".yml"),            // legacy: {client}.yml
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 func (d *TraefikDriver) ListRoutes(clientName string, app string) ([]string, error) {
@@ -51,6 +61,12 @@ func (d *TraefikDriver) CountAllRoutes(clientName string) (int, error) {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return 0, err
+	}
+
+	// Also include legacy config file if it exists
+	legacyPath := filepath.Join(d.configDir, clientName+".yml")
+	if _, err := os.Stat(legacyPath); err == nil {
+		matches = append(matches, legacyPath)
 	}
 
 	total := 0
