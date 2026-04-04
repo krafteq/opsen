@@ -1,5 +1,14 @@
 # @opsen/azure
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [40cd22f]
+- Updated dependencies [0d8136d]
+  - @opsen/cert-renewer@0.2.2
+  - @opsen/platform@0.4.0
+
 ## 0.4.0
 
 ### Minor Changes

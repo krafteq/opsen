@@ -1,6 +1,6 @@
 {
   "name": "@opsen/k8s-ops",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Generic Kubernetes cluster components: cert-manager, ingress-nginx, external-dns, monitoring, and more",
   "main": "src/index.ts",
   "files": [

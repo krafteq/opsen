@@ -1,5 +1,17 @@
 # @opsen/k8s-ops
 
+## 0.2.0
+
+### Minor Changes
+
+- 0d8136d: Wrap all resource Args fields with `pulumi.Input<>` for consumer flexibility. Arrays and Records are double-wrapped (e.g. `pulumi.Input<pulumi.Input<string>[]>`). Consumers can now pass Outputs directly without `.apply()` wrappers.
+
+### Patch Changes
+
+- Updated dependencies [0d8136d]
+  - @opsen/platform@0.4.0
+  - @opsen/k8s@0.2.1
+
 ## 0.1.2
 
 ### Patch Changes
