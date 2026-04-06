@@ -51,7 +51,7 @@ describe('createSubResourceProvider', () => {
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
         // Token requests → always succeed
-        if (typeof url === 'string' && url.includes('login.microsoftonline.com')) {
+        if (typeof url === 'string' && new URL(url).hostname === 'login.microsoftonline.com') {
           return createMockResponse(200, { access_token: 'test-token', expires_in: 3600 })
         }
 
