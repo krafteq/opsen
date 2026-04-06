@@ -1,25 +1,12 @@
-import * as path from 'node:path'
 import { dynamic, type CustomResourceOptions } from '@pulumi/pulumi'
 
 import type { MirrorStateProviderInputs, MirrorStateInputs } from './types'
-type ServerModule = typeof import('./server')
-type CommonModule = typeof import('./common')
-
-// Resolve absolute paths at module load time so they survive Pulumi's closure
-// serialization. The dynamic provider runs plain Node.js (no tsx), so paths must
-// point to compiled .js files in dist/. When loaded via tsx from src/, remap accordingly.
-function resolveForDynamicProvider(relativePath: string): string {
-  const resolved = path.resolve(__dirname, relativePath)
-  return resolved.replace(/\/src\//, '/dist/') + '.js'
-}
-const serverPath = resolveForDynamicProvider('./server')
-const commonPath = resolveForDynamicProvider('./common')
+import { sendData, getData, removeData } from './server'
+import { compareStates } from './common'
 
 export class MirrorStateProvider implements dynamic.ResourceProvider {
   async create(inputs: MirrorStateProviderInputs): Promise<dynamic.CreateResult> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const server: ServerModule = require(serverPath)
-    const hash = await server.sendData(inputs)
+    const hash = await sendData(inputs)
     return {
       id: `${inputs.connection.user}: ${inputs.remotePath}`,
       outs: { ...inputs, filesHash: hash },
@@ -31,9 +18,7 @@ export class MirrorStateProvider implements dynamic.ResourceProvider {
     _olds: MirrorStateProviderInputs,
     news: MirrorStateProviderInputs,
   ): Promise<dynamic.UpdateResult> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const server: ServerModule = require(serverPath)
-    const hash = await server.sendData(news)
+    const hash = await sendData(news)
     return { outs: { ...news, filesHash: hash } }
   }
 
@@ -42,14 +27,10 @@ export class MirrorStateProvider implements dynamic.ResourceProvider {
     _olds: MirrorStateProviderInputs,
     news: MirrorStateProviderInputs,
   ): Promise<dynamic.DiffResult> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const server: ServerModule = require(serverPath)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const common: CommonModule = require(commonPath)
     try {
-      const remoteState = await server.getData(news)
+      const remoteState = await getData(news)
       return {
-        changes: !common.compareStates(remoteState, news.files),
+        changes: !compareStates(remoteState, news.files),
       }
     } catch (err: unknown) {
       // During preview, Output<string> hosts may not be resolved yet —
@@ -63,9 +44,7 @@ export class MirrorStateProvider implements dynamic.ResourceProvider {
   }
 
   async delete(_id: string, props: MirrorStateProviderInputs): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const server: ServerModule = require(serverPath)
-    await server.removeData(props)
+    await removeData(props)
   }
 }
 

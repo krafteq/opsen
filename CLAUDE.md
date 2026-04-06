@@ -133,6 +133,15 @@ const resolved = pulumi.all({ foo: args.foo, bar: args.bar })
 // use resolved.apply(({ foo, bar }) => ...) for helm values, etc.
 ```
 
+### Pulumi Dynamic Provider Closure Serialization
+
+Pulumi serializes dynamic provider closures into state. It captures function source code via `func.toString()` and recursively inlines all referenced local modules by value. npm packages and Node.js built-ins become `require("package-name")` calls. Normal `import { fn } from './local'` is fine — Pulumi inlines the code automatically.
+
+**What is NOT allowed:**
+
+- **Dynamic `require()` with computed paths** — e.g. `const mod = require(resolvedPath)`. The path string gets captured as a closure variable and baked into state. If the path changes, deserialization breaks. Always use static `import` statements instead.
+- **Pulling in non-serializable values** — native bindings, circular references, or large transitive dependency trees can cause serialization failures. Keep the closure footprint minimal.
+
 ## Security
 
 - **No shell command injection** — never interpolate variables into `execSync()` strings. Use `execFileSync(cmd, args[])` with argument arrays instead. This applies to all CLI wrappers (`az`, `hcloud`, `docker`, `ssh`, `kubectl`, etc.) in `@opsen/testing` and e2e tests.
