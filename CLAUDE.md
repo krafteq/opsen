@@ -133,6 +133,17 @@ const resolved = pulumi.all({ foo: args.foo, bar: args.bar })
 // use resolved.apply(({ foo, bar }) => ...) for helm values, etc.
 ```
 
+### Pulumi Dynamic Provider Self-Containment
+
+Pulumi serializes dynamic provider closures into state, including absolute paths to every local module referenced in the closure chain. If any referenced file moves or the project is built in a different directory, deserialization breaks and `pulumi up` / `pulumi destroy` fails.
+
+**Rule: a dynamic provider file must NOT import from any other local file/module.** All source code needed by the provider (helper functions, interfaces used at runtime, constants) must be inlined in the same file. Only imports from 3rd-party npm packages and Node.js built-ins are allowed.
+
+- `import type { ... }` from local modules is OK — TypeScript erases it completely before Pulumi sees the code.
+- Value imports (`import { fn }`) from local modules are **NOT OK** — they create runtime `require()` calls that get serialized.
+- If multiple provider files need the same helper, duplicate it in each file. The duplication is intentional and required.
+- The `dynamic.Resource` subclass and its public `Args` interface live in the same file as the provider. `import type` for the Args interface is fine.
+
 ## Security
 
 - **No shell command injection** — never interpolate variables into `execSync()` strings. Use `execFileSync(cmd, args[])` with argument arrays instead. This applies to all CLI wrappers (`az`, `hcloud`, `docker`, `ssh`, `kubectl`, etc.) in `@opsen/testing` and e2e tests.
