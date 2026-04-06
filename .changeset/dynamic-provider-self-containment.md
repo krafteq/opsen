@@ -1,15 +1,13 @@
 ---
-'@opsen/agent': patch
-'@opsen/azure': patch
 '@opsen/docker-compose': patch
 ---
 
-fix: inline all local module dependencies into dynamic provider files
+fix(docker-compose): replace dynamic require() with static imports in MirrorState provider
 
-Pulumi serializes dynamic provider closures into state, including absolute paths
-to every local module referenced in the closure chain. This caused failures when
-the project was built in a different directory or files were moved.
+The MirrorState dynamic provider used `resolveForDynamicProvider()` to compute
+absolute paths at module load time, then `require(path)` inside provider methods.
+These computed path strings were captured in Pulumi's closure serialization and
+baked into state — if the build directory changed, deserialization would break.
 
-All dynamic provider files are now fully self-contained — helper functions,
-interfaces, and constants are inlined directly. Only 3rd-party npm packages and
-Node.js built-in imports remain.
+Replaced with standard static imports. Pulumi's closure serializer automatically
+inlines local module code by value, so static imports work correctly.

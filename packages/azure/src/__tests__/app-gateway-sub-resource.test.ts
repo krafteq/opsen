@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock @pulumi/pulumi
 vi.mock('@pulumi/pulumi', () => ({
@@ -12,7 +12,17 @@ vi.mock('@pulumi/pulumi', () => ({
     strings.reduce((r, s, i) => r + s + (values[i] ?? ''), ''),
 }))
 
+// Mock the azure-connection module to avoid token caching issues
+vi.mock('../app-gateway/azure-connection', () => ({
+  getAzureToken: vi.fn().mockResolvedValue('test-token'),
+  azureApiRequest: vi.fn(),
+  ARM_SCOPE: 'https://management.azure.com/.default',
+}))
+
 import { createSubResourceProvider } from '../app-gateway/providers/app-gateway-sub-resource'
+import { azureApiRequest } from '../app-gateway/azure-connection'
+
+const mockAzureApiRequest = vi.mocked(azureApiRequest)
 
 const testConnection = {
   subscriptionId: 'sub-123',
@@ -22,21 +32,6 @@ const testConnection = {
   clientSecret: 'secret-123',
 }
 
-function createMockResponse(status: number, data: unknown, etag?: string) {
-  const text = JSON.stringify(data)
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => text,
-    json: async () => data,
-    headers: { get: (name: string) => (name.toLowerCase() === 'etag' ? (etag ?? null) : null) },
-  }
-}
-
-/** Azure API responses queued per test (token requests handled automatically) */
-let apiResponses: Array<{ status: number; data: unknown; etag?: string } | Error>
-let capturedApiBodies: any[]
-
 describe('createSubResourceProvider', () => {
   const provider = createSubResourceProvider({
     arrayProperty: 'httpListeners',
@@ -44,40 +39,24 @@ describe('createSubResourceProvider', () => {
   })
 
   beforeEach(() => {
-    apiResponses = []
-    capturedApiBodies = []
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        // Token requests → always succeed
-        if (typeof url === 'string' && new URL(url).hostname === 'login.microsoftonline.com') {
-          return createMockResponse(200, { access_token: 'test-token', expires_in: 3600 })
-        }
-
-        // Azure management API requests
-        if (init?.body) {
-          capturedApiBodies.push(JSON.parse(init.body as string))
-        }
-
-        const response = apiResponses.shift()
-        if (!response) throw new Error(`No more mock responses for ${init?.method} ${url}`)
-        if (response instanceof Error) throw response
-
-        return createMockResponse(response.status, response.data, response.etag)
-      }),
-    )
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
+    mockAzureApiRequest.mockReset()
   })
 
   it('create: adds entry to gateway array', async () => {
-    apiResponses = [
-      { status: 200, data: { properties: { httpListeners: [] } }, etag: '"etag-1"' },
-      { status: 200, data: { id: 'updated' }, etag: '"etag-2"' },
-    ]
+    let capturedBody: any
+
+    mockAzureApiRequest
+      // GET gateway
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { properties: { httpListeners: [] } },
+        etag: '"etag-1"',
+      })
+      // PUT gateway
+      .mockImplementationOnce(async (_method, _url, _token, body) => {
+        capturedBody = body
+        return { status: 200, data: { id: 'updated' }, etag: '"etag-2"' }
+      })
 
     const inputs = {
       connection: testConnection,
@@ -89,13 +68,15 @@ describe('createSubResourceProvider', () => {
 
     expect(result.id).toBe('my-gw/httpListeners/my-listener')
     expect(result.outs).toEqual(inputs)
-    expect(capturedApiBodies[0].properties.httpListeners).toHaveLength(1)
-    expect(capturedApiBodies[0].properties.httpListeners[0].name).toBe('my-listener')
+    expect(capturedBody.properties.httpListeners).toHaveLength(1)
+    expect(capturedBody.properties.httpListeners[0].name).toBe('my-listener')
   })
 
   it('create: updates existing entry with same name', async () => {
-    apiResponses = [
-      {
+    let capturedBody: any
+
+    mockAzureApiRequest
+      .mockResolvedValueOnce({
         status: 200,
         data: {
           properties: {
@@ -103,9 +84,11 @@ describe('createSubResourceProvider', () => {
           },
         },
         etag: '"etag-1"',
-      },
-      { status: 200, data: { id: 'updated' }, etag: '"etag-2"' },
-    ]
+      })
+      .mockImplementationOnce(async (_method, _url, _token, body) => {
+        capturedBody = body
+        return { status: 200, data: { id: 'updated' }, etag: '"etag-2"' }
+      })
 
     const inputs = {
       connection: testConnection,
@@ -115,13 +98,15 @@ describe('createSubResourceProvider', () => {
 
     await provider.create!(inputs)
 
-    expect(capturedApiBodies[0].properties.httpListeners).toHaveLength(1)
-    expect(capturedApiBodies[0].properties.httpListeners[0].properties.hostName).toBe('new.example.com')
+    expect(capturedBody.properties.httpListeners).toHaveLength(1)
+    expect(capturedBody.properties.httpListeners[0].properties.hostName).toBe('new.example.com')
   })
 
   it('delete: removes entry from gateway array', async () => {
-    apiResponses = [
-      {
+    let capturedBody: any
+
+    mockAzureApiRequest
+      .mockResolvedValueOnce({
         status: 200,
         data: {
           properties: {
@@ -132,9 +117,11 @@ describe('createSubResourceProvider', () => {
           },
         },
         etag: '"etag-1"',
-      },
-      { status: 200, data: { id: 'updated' }, etag: '"etag-2"' },
-    ]
+      })
+      .mockImplementationOnce(async (_method, _url, _token, body) => {
+        capturedBody = body
+        return { status: 200, data: { id: 'updated' }, etag: '"etag-2"' }
+      })
 
     await provider.delete!('my-gw/httpListeners/delete-me', {
       connection: testConnection,
@@ -142,19 +129,30 @@ describe('createSubResourceProvider', () => {
       entry: { name: 'delete-me', properties: {} },
     })
 
-    expect(capturedApiBodies[0].properties.httpListeners).toHaveLength(1)
-    expect(capturedApiBodies[0].properties.httpListeners[0].name).toBe('keep-me')
+    expect(capturedBody.properties.httpListeners).toHaveLength(1)
+    expect(capturedBody.properties.httpListeners[0].name).toBe('keep-me')
   })
 
   it('retries on 412 (etag mismatch)', async () => {
-    apiResponses = [
-      // First attempt: GET succeeds, PUT fails with 412
-      { status: 200, data: { properties: { httpListeners: [] } }, etag: '"etag-1"' },
-      new Error('Azure API PUT ... returned 412: Precondition Failed'),
-      // Retry: GET + PUT succeed
-      { status: 200, data: { properties: { httpListeners: [] } }, etag: '"etag-new"' },
-      { status: 200, data: { id: 'updated' }, etag: '"etag-2"' },
-    ]
+    mockAzureApiRequest
+      // First attempt: GET + PUT (fails with 412)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { properties: { httpListeners: [] } },
+        etag: '"etag-1"',
+      })
+      .mockRejectedValueOnce(new Error('Azure API PUT ... returned 412: Precondition Failed'))
+      // Retry: GET + PUT (success)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { properties: { httpListeners: [] } },
+        etag: '"etag-new"',
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { id: 'updated' },
+        etag: '"etag-2"',
+      })
 
     const inputs = {
       connection: testConnection,
@@ -165,8 +163,8 @@ describe('createSubResourceProvider', () => {
     const result = await provider.create!(inputs)
     expect(result.id).toBe('my-gw/httpListeners/retry-listener')
 
-    // 2 GET + 2 PUT = 4 Azure API calls (plus token requests)
-    expect(capturedApiBodies).toHaveLength(2) // 2 PUT bodies captured
+    // 2 GET calls + 2 PUT calls = 4 azureApiRequest calls
+    expect(mockAzureApiRequest).toHaveBeenCalledTimes(4)
   })
 
   it('diff: detects entry changes', async () => {

@@ -133,16 +133,14 @@ const resolved = pulumi.all({ foo: args.foo, bar: args.bar })
 // use resolved.apply(({ foo, bar }) => ...) for helm values, etc.
 ```
 
-### Pulumi Dynamic Provider Self-Containment
+### Pulumi Dynamic Provider Closure Serialization
 
-Pulumi serializes dynamic provider closures into state, including absolute paths to every local module referenced in the closure chain. If any referenced file moves or the project is built in a different directory, deserialization breaks and `pulumi up` / `pulumi destroy` fails.
+Pulumi serializes dynamic provider closures into state. It captures function source code via `func.toString()` and recursively inlines all referenced local modules by value. npm packages and Node.js built-ins become `require("package-name")` calls. Normal `import { fn } from './local'` is fine — Pulumi inlines the code automatically.
 
-**Rule: a dynamic provider file must NOT import from any other local file/module.** All source code needed by the provider (helper functions, interfaces used at runtime, constants) must be inlined in the same file. Only imports from 3rd-party npm packages and Node.js built-ins are allowed.
+**What is NOT allowed:**
 
-- `import type { ... }` from local modules is OK — TypeScript erases it completely before Pulumi sees the code.
-- Value imports (`import { fn }`) from local modules are **NOT OK** — they create runtime `require()` calls that get serialized.
-- If multiple provider files need the same helper, duplicate it in each file. The duplication is intentional and required.
-- The `dynamic.Resource` subclass and its public `Args` interface live in the same file as the provider. `import type` for the Args interface is fine.
+- **Dynamic `require()` with computed paths** — e.g. `const mod = require(resolvedPath)`. The path string gets captured as a closure variable and baked into state. If the path changes, deserialization breaks. Always use static `import` statements instead.
+- **Pulling in non-serializable values** — native bindings, circular references, or large transitive dependency trees can cause serialization failures. Keep the closure footprint minimal.
 
 ## Security
 
