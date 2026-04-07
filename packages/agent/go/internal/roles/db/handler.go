@@ -111,8 +111,19 @@ func (h *Handler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbName := fmt.Sprintf("opsen_%s_%s", client.Client, name)
-	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, name, req.Owner.Username)
+	// Database names are globally unique — first-come-first-served
+	dbName := name
+	roleName := req.Owner.Username
+
+	if owner := h.tracker.DatabaseOwner(dbName); owner != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("database name '%s' is already taken", dbName)})
+		return
+	}
+
+	if h.tracker.RoleInUse(roleName) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("role name '%s' is already taken", roleName)})
+		return
+	}
 
 	// Create role
 	roleOpts := RoleOptions{
@@ -419,7 +430,12 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, dbName, username)
+	roleName := username
+
+	if h.tracker.RoleInUse(roleName) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("role name '%s' is already taken", roleName)})
+		return
+	}
 
 	roleOpts := RoleOptions{
 		Password:        req.Password,
@@ -464,8 +480,7 @@ func (h *Handler) DropRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply same prefix as CreateRole
-	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, dbName, username)
+	roleName := username
 
 	// Find and remove role from additional roles
 	found := false

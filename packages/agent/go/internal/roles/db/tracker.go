@@ -151,6 +151,39 @@ func (t *ResourceTracker) SetQuotaExceeded(clientName, dbName string, exceeded b
 	t.save()
 }
 
+// DatabaseOwner returns the client that owns a database name, or "" if available.
+func (t *ResourceTracker) DatabaseOwner(dbName string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for clientName, client := range t.Clients {
+		if _, ok := client.Databases[dbName]; ok {
+			return clientName
+		}
+	}
+	return ""
+}
+
+// RoleInUse checks if a role name is used by any database across all clients.
+func (t *ResourceTracker) RoleInUse(roleName string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for _, client := range t.Clients {
+		for _, record := range client.Databases {
+			if record.OwnerRole == roleName {
+				return true
+			}
+			for _, r := range record.AdditionalRoles {
+				if r == roleName {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // AllDatabases returns all database records across all clients.
 func (t *ResourceTracker) AllDatabases() map[string]map[string]*DatabaseRecord {
 	t.mu.RLock()

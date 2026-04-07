@@ -59,7 +59,7 @@ func validateCreateRequest(name string, req *CreateDatabaseRequest, policy *conf
 	return violations
 }
 
-// validateDatabaseName checks the database name against policy.
+// validateDatabaseName checks the database name is a valid PostgreSQL identifier.
 func validateDatabaseName(name string, policy *config.DbPolicy) []string {
 	var violations []string
 
@@ -68,52 +68,28 @@ func validateDatabaseName(name string, policy *config.DbPolicy) []string {
 		return violations
 	}
 
-	if len(name) > 50 {
-		violations = append(violations, "database name too long: maximum 50 characters")
-	}
-
-	// Only allow lowercase alphanumeric and underscores
-	for _, c := range name {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
-			violations = append(violations, "database name must contain only lowercase letters, digits, and underscores")
-			break
-		}
-	}
-
-	// Must start with a letter
-	if len(name) > 0 && !(name[0] >= 'a' && name[0] <= 'z') {
-		violations = append(violations, "database name must start with a letter")
+	if !isValidIdentifier(name) {
+		violations = append(violations, "database name must be 1-63 characters, lowercase letters/digits/underscores, starting with a letter")
 	}
 
 	return violations
 }
 
-// validateUsername checks a username against the client's username policy.
+// validateUsername checks a username is a valid PostgreSQL identifier and respects policy restrictions.
 func validateUsername(username string, policy *config.DbPolicy) []string {
 	var violations []string
-	up := policy.Username
 
 	if username == "" {
 		violations = append(violations, "username is required")
 		return violations
 	}
 
-	if up.MaxLength > 0 && len(username) > up.MaxLength {
-		violations = append(violations, fmt.Sprintf("username too long: maximum %d characters", up.MaxLength))
+	if !isValidIdentifier(username) {
+		violations = append(violations, "username must be 1-63 characters, lowercase letters/digits/underscores, starting with a letter")
+		return violations
 	}
 
-	// Only allow lowercase alphanumeric and underscores
-	for _, c := range username {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
-			violations = append(violations, "username must contain only lowercase letters, digits, and underscores")
-			break
-		}
-	}
-
-	// Must start with a letter
-	if len(username) > 0 && !(username[0] >= 'a' && username[0] <= 'z') {
-		violations = append(violations, "username must start with a letter")
-	}
+	up := policy.Username
 
 	// Check denied names
 	lower := strings.ToLower(username)
@@ -127,13 +103,6 @@ func validateUsername(username string, policy *config.DbPolicy) []string {
 	for _, prefix := range up.DeniedPrefixes {
 		if strings.HasPrefix(lower, strings.ToLower(prefix)) {
 			violations = append(violations, fmt.Sprintf("username prefix '%s' is not allowed", prefix))
-		}
-	}
-
-	// Check required prefix
-	if up.RequiredPrefix != "" {
-		if !strings.HasPrefix(lower, strings.ToLower(up.RequiredPrefix)) {
-			violations = append(violations, fmt.Sprintf("username must start with '%s'", up.RequiredPrefix))
 		}
 	}
 
