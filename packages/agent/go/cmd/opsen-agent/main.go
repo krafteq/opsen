@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,9 +13,17 @@ import (
 	"github.com/opsen/agent/internal/server"
 )
 
+var Version = "dev"
+
 func main() {
 	configPath := flag.String("config", "/etc/opsen-agent/agent.yaml", "path to agent config file")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(Version)
+		os.Exit(0)
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -34,7 +43,7 @@ func main() {
 		go clientStore.Watch()
 	}
 
-	srv, err := server.New(cfg, clientStore, logger)
+	srv, err := server.New(cfg, clientStore, logger, Version)
 	if err != nil {
 		slog.Error("failed to create server", "error", err)
 		os.Exit(1)

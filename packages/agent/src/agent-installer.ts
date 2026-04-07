@@ -8,6 +8,7 @@ import { serializeAgentConfig, serializeClientPolicy } from './config'
 import type { AgentInstallerArgs } from './types'
 
 const GO_SRC_DIR = path.resolve(__dirname, '..', 'go')
+const PKG_VERSION: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf-8')).version
 
 /** Wraps a shell command with sudo when the SSH user is not root. */
 function sudo(connUser: pulumi.Input<string> | undefined, cmd: string): pulumi.Output<string> {
@@ -40,8 +41,7 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-build`,
       {
         dir: GO_SRC_DIR,
-        create:
-          'docker build -f Dockerfile.build -o type=local,dest=./out . 2>&1 && sha256sum ./out/opsen-agent | cut -d" " -f1',
+        create: `docker build --build-arg VERSION=${PKG_VERSION} -f Dockerfile.build -o type=local,dest=./out . 2>&1 && sha256sum ./out/opsen-agent | cut -d" " -f1`,
         triggers: [sourceHash],
       },
       { parent: this },
