@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 )
 
 // DatabaseRecord tracks a single provisioned database.
@@ -17,6 +18,8 @@ type DatabaseRecord struct {
 	MaxSizeMb       int      `json:"max_size_mb"`
 	Extensions      []string `json:"extensions"`
 	QuotaExceeded   bool     `json:"quota_exceeded"`
+	CreatedAt       string   `json:"created_at"`
+	ModifiedAt      string   `json:"modified_at"`
 }
 
 // ClientDatabases tracks all databases for one client.
@@ -78,11 +81,18 @@ func (t *ResourceTracker) Set(clientName, dbName string, record *DatabaseRecord)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	client := t.Clients[clientName]
 	if client == nil {
 		client = &ClientDatabases{Databases: make(map[string]*DatabaseRecord)}
 		t.Clients[clientName] = client
 	}
+	if existing := client.Databases[dbName]; existing != nil && existing.CreatedAt != "" {
+		record.CreatedAt = existing.CreatedAt
+	} else {
+		record.CreatedAt = now
+	}
+	record.ModifiedAt = now
 	client.Databases[dbName] = record
 	t.save()
 }

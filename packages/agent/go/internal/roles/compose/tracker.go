@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/opsen/agent/internal/config"
 )
@@ -16,6 +17,8 @@ type ProjectResources struct {
 	MemoryMb   int     `json:"memory_mb"`
 	Cpus       float64 `json:"cpus"`
 	PolicyHash string  `json:"policy_hash,omitempty"` // hash of policy fields affecting deployment
+	CreatedAt  string  `json:"created_at"`
+	ModifiedAt string  `json:"modified_at"`
 }
 
 // TotalResources is the aggregated usage across all projects for a client.
@@ -130,11 +133,18 @@ func (t *ResourceTracker) Set(clientName, projectName string, resources *Project
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	client := t.Clients[clientName]
 	if client == nil {
 		client = &ClientResources{Projects: make(map[string]*ProjectResources)}
 		t.Clients[clientName] = client
 	}
+	if existing := client.Projects[projectName]; existing != nil && existing.CreatedAt != "" {
+		resources.CreatedAt = existing.CreatedAt
+	} else {
+		resources.CreatedAt = now
+	}
+	resources.ModifiedAt = now
 	client.Projects[projectName] = resources
 	t.save()
 }
