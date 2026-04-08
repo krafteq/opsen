@@ -19,6 +19,15 @@ interface DatabaseInputs {
   extensions?: string[]
 }
 
+/** Response from the agent's database create endpoint. */
+export interface DatabaseCreateResult {
+  status: string
+  database: string
+  owner: string
+  host: string
+  port: number
+}
+
 const databaseProvider: pulumi.dynamic.ResourceProvider = {
   async create(inputs: DatabaseInputs) {
     const resp = await agentRequest(inputs.connection, 'PUT', `/v1/db/databases/${inputs.name}`, {
@@ -29,7 +38,7 @@ const databaseProvider: pulumi.dynamic.ResourceProvider = {
     checkResponse(resp, [200, 201])
     return {
       id: inputs.name,
-      outs: { ...inputs, createResult: resp.body },
+      outs: { ...inputs, createResult: resp.body as DatabaseCreateResult },
     }
   },
 
@@ -52,7 +61,7 @@ const databaseProvider: pulumi.dynamic.ResourceProvider = {
         limits: news.limits,
       })
       checkResponse(resp, [200])
-      return { outs: { ...news, updateResult: resp.body } }
+      return { outs: { ...news, createResult: resp.body as DatabaseCreateResult } }
     }
 
     // Otherwise full replace via PUT
@@ -62,7 +71,7 @@ const databaseProvider: pulumi.dynamic.ResourceProvider = {
       extensions: news.extensions,
     })
     checkResponse(resp, [200, 201])
-    return { outs: { ...news, createResult: resp.body } }
+    return { outs: { ...news, createResult: resp.body as DatabaseCreateResult } }
   },
 
   async delete(id, props: DatabaseInputs) {
@@ -102,7 +111,7 @@ export interface DatabaseArgs {
 export class Database extends pulumi.dynamic.Resource {
   declare readonly name: pulumi.Output<string>
   declare readonly owner: pulumi.Output<{ username: string; password: string }>
-  declare readonly createResult: pulumi.Output<unknown>
+  declare readonly createResult: pulumi.Output<DatabaseCreateResult>
 
   constructor(name: string, args: DatabaseArgs, opts?: pulumi.CustomResourceOptions) {
     super(databaseProvider, name, { ...args, createResult: undefined }, opts)

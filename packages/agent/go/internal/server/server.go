@@ -25,13 +25,14 @@ type Server struct {
 	composeHandler *compose.Handler
 }
 
-func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.Logger) (*Server, error) {
+func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.Logger, version string) (*Server, error) {
 	mux := http.NewServeMux()
 
 	// Health endpoint — no auth required
+	healthBody := fmt.Sprintf(`{"status":"ok","version":%q}`, version)
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		w.Write([]byte(healthBody))
 	})
 
 	// Compose role (Docker Compose project deployments)

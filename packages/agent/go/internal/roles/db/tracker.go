@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 )
 
 // DatabaseRecord tracks a single provisioned database.
@@ -17,6 +18,8 @@ type DatabaseRecord struct {
 	MaxSizeMb       int      `json:"max_size_mb"`
 	Extensions      []string `json:"extensions"`
 	QuotaExceeded   bool     `json:"quota_exceeded"`
+	CreatedAt       string   `json:"created_at"`
+	ModifiedAt      string   `json:"modified_at"`
 }
 
 // ClientDatabases tracks all databases for one client.
@@ -78,11 +81,18 @@ func (t *ResourceTracker) Set(clientName, dbName string, record *DatabaseRecord)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	client := t.Clients[clientName]
 	if client == nil {
 		client = &ClientDatabases{Databases: make(map[string]*DatabaseRecord)}
 		t.Clients[clientName] = client
 	}
+	if existing := client.Databases[dbName]; existing != nil && existing.CreatedAt != "" {
+		record.CreatedAt = existing.CreatedAt
+	} else {
+		record.CreatedAt = now
+	}
+	record.ModifiedAt = now
 	client.Databases[dbName] = record
 	t.save()
 }
@@ -149,6 +159,39 @@ func (t *ResourceTracker) SetQuotaExceeded(clientName, dbName string, exceeded b
 	}
 	record.QuotaExceeded = exceeded
 	t.save()
+}
+
+// DatabaseOwner returns the client that owns a database name, or "" if available.
+func (t *ResourceTracker) DatabaseOwner(dbName string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for clientName, client := range t.Clients {
+		if _, ok := client.Databases[dbName]; ok {
+			return clientName
+		}
+	}
+	return ""
+}
+
+// RoleInUse checks if a role name is used by any database across all clients.
+func (t *ResourceTracker) RoleInUse(roleName string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for _, client := range t.Clients {
+		for _, record := range client.Databases {
+			if record.OwnerRole == roleName {
+				return true
+			}
+			for _, r := range record.AdditionalRoles {
+				if r == roleName {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // AllDatabases returns all database records across all clients.

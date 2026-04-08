@@ -24,6 +24,14 @@ interface IngressRoutesInputs {
   routes: IngressRoute[]
 }
 
+/** Response from the agent's ingress route update endpoint. */
+export interface IngressUpdateResult {
+  status: string
+  app: string
+  routes: number
+  policy_modifications: string[]
+}
+
 /** Transform TypeScript route to Go API format (camelCase → snake_case, domain → hosts). */
 function toApiRoute(route: IngressRoute) {
   return {
@@ -46,7 +54,7 @@ const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
     checkResponse(resp, [200])
     return {
       id: inputs.app,
-      outs: { ...inputs, updateResult: resp.body },
+      outs: { ...inputs, updateResult: resp.body as IngressUpdateResult },
     }
   },
 
@@ -63,7 +71,7 @@ const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
       routes: news.routes.map(toApiRoute),
     })
     checkResponse(resp, [200])
-    return { outs: { ...news, updateResult: resp.body } }
+    return { outs: { ...news, updateResult: resp.body as IngressUpdateResult } }
   },
 
   async delete(_id, props: IngressRoutesInputs) {
@@ -113,7 +121,7 @@ export interface IngressRoutesArgs {
 export class IngressRoutes extends pulumi.dynamic.Resource {
   declare readonly app: pulumi.Output<string>
   declare readonly routes: pulumi.Output<IngressRoute[]>
-  declare readonly updateResult: pulumi.Output<unknown>
+  declare readonly updateResult: pulumi.Output<IngressUpdateResult>
 
   constructor(name: string, args: IngressRoutesArgs, opts?: pulumi.CustomResourceOptions) {
     super(ingressRoutesProvider, name, { ...args, updateResult: undefined }, opts)

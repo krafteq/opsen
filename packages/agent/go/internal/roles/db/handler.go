@@ -111,8 +111,19 @@ func (h *Handler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbName := fmt.Sprintf("opsen_%s_%s", client.Client, name)
-	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, name, req.Owner.Username)
+	// Database names are globally unique — first-come-first-served
+	dbName := name
+	roleName := req.Owner.Username
+
+	if owner := h.tracker.DatabaseOwner(dbName); owner != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("database name '%s' is already taken", dbName)})
+		return
+	}
+
+	if h.tracker.RoleInUse(roleName) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("role name '%s' is already taken", roleName)})
+		return
+	}
 
 	// Create role
 	roleOpts := RoleOptions{
@@ -250,15 +261,17 @@ func (h *Handler) DatabaseStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"database":          record.DatabaseName,
-		"owner":             record.OwnerRole,
-		"additional_roles":  record.AdditionalRoles,
-		"size_mb":           sizeMb,
-		"max_size_mb":       record.MaxSizeMb,
-		"connection_limit":  record.ConnectionLimit,
+		"database":           record.DatabaseName,
+		"owner":              record.OwnerRole,
+		"additional_roles":   record.AdditionalRoles,
+		"size_mb":            sizeMb,
+		"max_size_mb":        record.MaxSizeMb,
+		"connection_limit":   record.ConnectionLimit,
 		"active_connections": connCount,
-		"extensions":        record.Extensions,
-		"quota_exceeded":    record.QuotaExceeded,
+		"extensions":         record.Extensions,
+		"quota_exceeded":     record.QuotaExceeded,
+		"created_at":         record.CreatedAt,
+		"modified_at":        record.ModifiedAt,
 	})
 }
 
@@ -271,6 +284,8 @@ func (h *Handler) listDatabases(w http.ResponseWriter, client *config.ClientPoli
 		SizeMb        int    `json:"size_mb"`
 		MaxSizeMb     int    `json:"max_size_mb"`
 		QuotaExceeded bool   `json:"quota_exceeded"`
+		CreatedAt     string `json:"created_at"`
+		ModifiedAt    string `json:"modified_at"`
 	}
 
 	var databases []dbInfo
@@ -286,6 +301,8 @@ func (h *Handler) listDatabases(w http.ResponseWriter, client *config.ClientPoli
 				SizeMb:        sizeMb,
 				MaxSizeMb:     record.MaxSizeMb,
 				QuotaExceeded: record.QuotaExceeded,
+				CreatedAt:     record.CreatedAt,
+				ModifiedAt:    record.ModifiedAt,
 			})
 		}
 	}
@@ -419,7 +436,12 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, dbName, username)
+	roleName := username
+
+	if h.tracker.RoleInUse(roleName) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("role name '%s' is already taken", roleName)})
+		return
+	}
 
 	roleOpts := RoleOptions{
 		Password:        req.Password,
@@ -464,8 +486,7 @@ func (h *Handler) DropRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply same prefix as CreateRole
-	roleName := fmt.Sprintf("opsen_%s_%s_%s", client.Client, dbName, username)
+	roleName := username
 
 	// Find and remove role from additional roles
 	found := false
