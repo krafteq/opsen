@@ -1,5 +1,13 @@
 # @opsen/agent
 
+## 0.5.0
+
+### Minor Changes
+
+- 667bb63: Remove opsen\_ prefix and client scoping from database and role names. Clients now have full control over naming — database and role names are globally unique, first-come-first-served.
+- 36a8e8d: Track created_at and modified_at timestamps in state for databases and compose projects. Timestamps are surfaced in status API responses.
+- 14ee289: Replace `Output<unknown>` with strongly typed response interfaces on all dynamic resource outputs (ComposeProject, Database, DatabaseRole, IngressRoutes).
+
 ## 0.4.2
 
 ### Patch Changes
