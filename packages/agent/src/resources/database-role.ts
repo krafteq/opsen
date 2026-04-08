@@ -10,6 +10,12 @@ interface DatabaseRoleInputs {
   readOnly: boolean
 }
 
+/** Response from the agent's role create endpoint. */
+export interface DatabaseRoleCreateResult {
+  status: string
+  role: string
+}
+
 const databaseRoleProvider: pulumi.dynamic.ResourceProvider = {
   async create(inputs: DatabaseRoleInputs) {
     const resp = await agentRequest(
@@ -24,7 +30,7 @@ const databaseRoleProvider: pulumi.dynamic.ResourceProvider = {
     checkResponse(resp, [200, 201])
     return {
       id: `${inputs.database}/${inputs.role}`,
-      outs: { ...inputs, createResult: resp.body },
+      outs: { ...inputs, createResult: resp.body as DatabaseRoleCreateResult },
     }
   },
 
@@ -43,7 +49,7 @@ const databaseRoleProvider: pulumi.dynamic.ResourceProvider = {
       read_only: news.readOnly,
     })
     checkResponse(resp, [200, 201])
-    return { outs: { ...news, createResult: resp.body } }
+    return { outs: { ...news, createResult: resp.body as DatabaseRoleCreateResult } }
   },
 
   async delete(_id, props: DatabaseRoleInputs) {
@@ -86,7 +92,7 @@ export interface DatabaseRoleArgs {
 export class DatabaseRole extends pulumi.dynamic.Resource {
   declare readonly database: pulumi.Output<string>
   declare readonly role: pulumi.Output<string>
-  declare readonly createResult: pulumi.Output<unknown>
+  declare readonly createResult: pulumi.Output<DatabaseRoleCreateResult>
 
   constructor(name: string, args: DatabaseRoleArgs, opts?: pulumi.CustomResourceOptions) {
     super(databaseRoleProvider, name, { ...args, readOnly: args.readOnly ?? false, createResult: undefined }, opts)
