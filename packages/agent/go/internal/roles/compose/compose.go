@@ -174,10 +174,12 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 
 // hardenCompose injects security defaults into all services.
 // portMappings are injected as host port bindings (from expose → allocated ports).
-func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config.ClientPolicy, portMappings []PortMapping) []string {
+// Each project gets its own internal network so projects are isolated by default;
+// cross-project communication must go through ingress.
+func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config.ClientPolicy, projectSlug string, portMappings []PortMapping) []string {
 	var modifications []string
 	hardening := cfg.GlobalHardening
-	networkName := fmt.Sprintf("opsen-%s-internal", client.Client)
+	networkName := fmt.Sprintf("opsen-%s-%s-internal", client.Client, projectSlug)
 
 	// Build a lookup of allocated ports by service name
 	bindAddr := ""
