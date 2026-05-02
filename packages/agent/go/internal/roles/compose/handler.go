@@ -133,7 +133,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply hardening and namespacing
-	modifications := hardenCompose(composeFile, h.cfg, client, portMappings)
+	modifications := hardenCompose(composeFile, h.cfg, client, projectSlug, portMappings)
 
 	// Write all project files
 	projectName := fmt.Sprintf("opsen-%s-%s", client.Client, projectSlug)
@@ -190,6 +190,8 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("deploy failed: %v", err)})
 		return
 	}
+
+	removeLegacyClientNetwork(h.cfg.Roles.Compose.ComposeBinary, client.Client, h.logger)
 
 	// Track resources with current policy hash
 	requestedResources.PolicyHash = policyHash(client, h.cfg)
@@ -343,6 +345,26 @@ func composeUp(composeBin, project, composePath string) error {
 		return fmt.Errorf("%s: %s", err, string(output))
 	}
 	return nil
+}
+
+// removeLegacyClientNetwork attempts to remove the legacy shared `opsen-{client}-internal`
+// network from when projects were not yet network-isolated. Best-effort: succeeds once the
+// last legacy-attached project has been redeployed onto its own per-project network.
+func removeLegacyClientNetwork(composeBin, clientName string, logger *slog.Logger) {
+	parts := strings.Fields(composeBin)
+	if len(parts) == 0 {
+		return
+	}
+	name := fmt.Sprintf("opsen-%s-internal", clientName)
+	cmd := exec.Command(parts[0], "network", "rm", name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Common cases: network has active endpoints (still in use by other projects),
+		// or no such network (already removed). Both are expected.
+		logger.Debug("legacy network cleanup skipped", "network", name, "output", strings.TrimSpace(string(output)))
+		return
+	}
+	logger.Info("removed legacy shared network", "network", name)
 }
 
 func (h *Handler) composeDown(project, composePath string) error {

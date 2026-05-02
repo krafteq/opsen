@@ -103,7 +103,7 @@ func (r *Reconciler) redeployProject(clientName string, client *config.ClientPol
 	}
 
 	// Re-harden with current policy
-	hardenCompose(composeFile, r.cfg, client, portMappings)
+	hardenCompose(composeFile, r.cfg, client, projectSlug, portMappings)
 
 	// Write hardened compose file
 	transformed, err := marshalCompose(composeFile)
@@ -124,6 +124,8 @@ func (r *Reconciler) redeployProject(clientName string, client *config.ClientPol
 		return
 	}
 
+	removeLegacyClientNetwork(composeBin, clientName, r.logger)
+
 	// Update the stored policy hash
 	r.tracker.mu.Lock()
 	if clientRes, ok := r.tracker.Clients[clientName]; ok {
@@ -141,6 +143,11 @@ func (r *Reconciler) redeployProject(clientName string, client *config.ClientPol
 // If this hash changes, existing deployments need to be re-hardened.
 func policyHash(client *config.ClientPolicy, cfg *config.AgentConfig) string {
 	h := sha256.New()
+
+	// Bumped when hardenCompose's network model changes — forces redeploy of all existing
+	// projects so they migrate from the legacy shared `opsen-{client}-internal` network onto
+	// per-project `opsen-{client}-{project}-internal` networks.
+	fmt.Fprintf(h, "netmodel=v2\n")
 
 	// Client compose policy fields
 	if client.Compose != nil {

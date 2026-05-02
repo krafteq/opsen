@@ -20,6 +20,40 @@ func minimalClient(name string) *config.ClientPolicy {
 	}
 }
 
+func TestHardenCompose_NetworkIsProjectScoped(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox"},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("acme"), "shop", nil)
+
+	def, ok := compose.Networks["default"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected default network as map, got %T", compose.Networks["default"])
+	}
+	if got := def["name"]; got != "opsen-acme-shop-internal" {
+		t.Errorf("expected network name opsen-acme-shop-internal, got %v", got)
+	}
+	if got := def["internal"]; got != true {
+		t.Errorf("expected network internal=true by default, got %v", got)
+	}
+
+	// Two projects of the same client must produce distinct networks.
+	other := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"api": {Image: "busybox"},
+		},
+	}
+	hardenCompose(other, minimalConfig(), minimalClient("acme"), "billing", nil)
+
+	otherDef := other.Networks["default"].(map[string]any)
+	if def["name"] == otherDef["name"] {
+		t.Errorf("expected two projects of the same client to have distinct networks, both got %v", def["name"])
+	}
+}
+
 func TestHardenCompose_StripsClientPorts(t *testing.T) {
 	compose := &ComposeFile{
 		Services: map[string]*ComposeService{
@@ -27,7 +61,7 @@ func TestHardenCompose_StripsClientPorts(t *testing.T) {
 		},
 	}
 
-	mods := hardenCompose(compose, minimalConfig(), minimalClient("c1"), nil)
+	mods := hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
 
 	if len(compose.Services["web"].Ports) != 0 {
 		t.Errorf("expected ports to be stripped, got %v", compose.Services["web"].Ports)
@@ -60,7 +94,7 @@ func TestHardenCompose_InjectsAllocatedPorts(t *testing.T) {
 		{HostPort: 8001, ContainerPort: "3000", Service: "api"},
 	}
 
-	hardenCompose(compose, minimalConfig(), client, portMappings)
+	hardenCompose(compose, minimalConfig(), client, "p", portMappings)
 
 	// Check web service got its port binding
 	webPorts := compose.Services["web"].Ports
@@ -106,7 +140,7 @@ func TestHardenCompose_PortsReplacedByAllocated(t *testing.T) {
 		{HostPort: 8042, ContainerPort: "80", Service: "web"},
 	}
 
-	hardenCompose(compose, minimalConfig(), client, portMappings)
+	hardenCompose(compose, minimalConfig(), client, "p", portMappings)
 
 	ports := compose.Services["web"].Ports
 	if len(ports) != 1 || ports[0] != "10.0.1.5:8042:80" {
@@ -125,7 +159,7 @@ func TestHardenCompose_EmptyBindAddress(t *testing.T) {
 		{HostPort: 8000, ContainerPort: "80", Service: "web"},
 	}
 
-	hardenCompose(compose, minimalConfig(), minimalClient("c1"), portMappings)
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", portMappings)
 
 	ports := compose.Services["web"].Ports
 	if len(ports) != 1 || ports[0] != ":8000:80" {
@@ -140,7 +174,7 @@ func TestHardenCompose_NoPortMappings(t *testing.T) {
 		},
 	}
 
-	hardenCompose(compose, minimalConfig(), minimalClient("c1"), nil)
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
 
 	if len(compose.Services["worker"].Ports) != 0 {
 		t.Errorf("expected no ports on worker, got %v", compose.Services["worker"].Ports)
@@ -162,7 +196,7 @@ func TestHardenCompose_TmpfsMerge(t *testing.T) {
 		{Path: "/run", Options: "size=16m"},
 	}
 
-	hardenCompose(compose, cfg, minimalClient("c1"), nil)
+	hardenCompose(compose, cfg, minimalClient("c1"), "p", nil)
 
 	tmpfs := parseTmpfsEntries(compose.Services["web"].Tmpfs)
 	if len(tmpfs) != 3 {
@@ -198,7 +232,7 @@ func TestHardenCompose_TmpfsDefaultOverridesClient(t *testing.T) {
 		{Path: "/tmp", Options: "noexec,nosuid,size=64m"},
 	}
 
-	hardenCompose(compose, cfg, minimalClient("c1"), nil)
+	hardenCompose(compose, cfg, minimalClient("c1"), "p", nil)
 
 	tmpfs := parseTmpfsEntries(compose.Services["web"].Tmpfs)
 	if len(tmpfs) != 1 {
@@ -219,7 +253,7 @@ func TestHardenCompose_TmpfsNoDefaults(t *testing.T) {
 	}
 
 	// No default tmpfs configured
-	hardenCompose(compose, minimalConfig(), minimalClient("c1"), nil)
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
 
 	tmpfs := parseTmpfsEntries(compose.Services["web"].Tmpfs)
 	if len(tmpfs) != 1 || tmpfs[0] != "/var/cache/nginx" {
@@ -242,7 +276,7 @@ func TestHardenCompose_TmpfsStringType(t *testing.T) {
 		{Path: "/tmp"},
 	}
 
-	hardenCompose(compose, cfg, minimalClient("c1"), nil)
+	hardenCompose(compose, cfg, minimalClient("c1"), "p", nil)
 
 	tmpfs := parseTmpfsEntries(compose.Services["web"].Tmpfs)
 	if len(tmpfs) != 2 {
