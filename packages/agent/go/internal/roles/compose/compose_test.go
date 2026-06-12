@@ -628,8 +628,48 @@ func TestHardenCompose_ChownSidecarCarriesMarkerLabel(t *testing.T) {
 	if got := sidecar.Labels[chownSidecarLabel]; got != chownSidecarLabelValue {
 		t.Errorf("expected marker label %s=%s, got %q", chownSidecarLabel, chownSidecarLabelValue, got)
 	}
-	if !isGeneratedChownSidecar(sidecar) {
+	if !isGeneratedChownSidecar("app-opsen-chown-init", sidecar) {
 		t.Error("expected isGeneratedChownSidecar to recognize the generated sidecar")
+	}
+	// Neither signal alone counts as agent-generated.
+	if isGeneratedChownSidecar("not-a-sidecar", sidecar) {
+		t.Error("marker label without the reserved suffix must not count as generated")
+	}
+	plain := &ComposeService{Image: "busybox"}
+	if isGeneratedChownSidecar("app-opsen-chown-init", plain) {
+		t.Error("reserved suffix without the marker label must not count as generated")
+	}
+}
+
+func TestValidateCompose_ReservesChownSidecarLabel(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			// Normal name, but forges the agent-owned marker label.
+			"worker": {Image: "busybox", Labels: map[string]string{chownSidecarLabel: chownSidecarLabelValue}},
+		},
+	}
+
+	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose)
+
+	if !hasViolation(violations, "label 'opsen.generated' is reserved for agent-generated helpers") {
+		t.Fatalf("expected reserved-label violation, got %v", violations)
+	}
+}
+
+func TestHardenCompose_PreservesUserServiceWithForgedLabel(t *testing.T) {
+	// A normally-named user service that forges the marker label must NOT be
+	// stripped during hardening (it is rejected at validation, but hardening on
+	// the reconcile path must still leave it intact since it lacks the suffix).
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"worker": {Image: "busybox", Labels: map[string]string{chownSidecarLabel: chownSidecarLabelValue}},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	if _, ok := compose.Services["worker"]; !ok {
+		t.Fatal("user service with a forged marker label but normal name must not be stripped")
 	}
 }
 

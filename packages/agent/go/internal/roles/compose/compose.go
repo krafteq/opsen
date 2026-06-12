@@ -109,11 +109,15 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 	}
 
 	for name, svc := range compose.Services {
-		// The chown-init sidecar suffix is reserved for agent-generated helpers.
-		// Reject user services using it so hardening never silently removes one
+		// The chown-init sidecar suffix and the agent-owned marker label are both
+		// reserved for agent-generated helpers. Reject user services using either,
+		// so hardening never silently removes a service it mistakes for its own
 		// (and so generated sidecar names can't collide with a user service).
 		if strings.HasSuffix(name, chownSidecarSuffix) {
 			violations = append(violations, fmt.Sprintf("service %s: name suffix '%s' is reserved for agent-generated helpers", name, chownSidecarSuffix))
+		}
+		if _, ok := svc.Labels[chownSidecarLabel]; ok {
+			violations = append(violations, fmt.Sprintf("service %s: label '%s' is reserved for agent-generated helpers", name, chownSidecarLabel))
 		}
 
 		if svc.Privileged != nil && *svc.Privileged && cfg.Deny.Privileged {
@@ -233,12 +237,13 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 	// Drop any chown-init sidecars (and the depends_on edges pointing at them)
 	// from a previously-hardened compose so re-hardening is idempotent — they are
 	// regenerated from scratch below against the current policy and volume set.
-	// Sidecars are identified by the agent-owned marker label, NOT by name suffix,
-	// so a user-authored service that merely shares the name shape is never touched
-	// (the suffix itself is reserved against user services in validateCompose).
+	// A service is treated as agent-generated only when it carries BOTH the
+	// agent-owned marker label AND the reserved name suffix — both are reserved
+	// against user input in validateCompose, so no user-authored service can be
+	// stripped here even if it forges one of the two signals.
 	removedSidecars := make(map[string]bool)
 	for name, svc := range compose.Services {
-		if isGeneratedChownSidecar(svc) {
+		if isGeneratedChownSidecar(name, svc) {
 			removedSidecars[name] = true
 			delete(compose.Services, name)
 		}
@@ -654,11 +659,14 @@ func buildChownSidecar(image, ownership string, volumeMounts, targets []string) 
 }
 
 // isGeneratedChownSidecar reports whether a service is an agent-generated
-// chown-init sidecar, identified by its marker label. Detection is label-based
-// (not name-based) so a user service that happens to share the name shape is
-// never mistaken for a generated helper.
-func isGeneratedChownSidecar(svc *ComposeService) bool {
-	return svc != nil && svc.Labels[chownSidecarLabel] == chownSidecarLabelValue
+// chown-init sidecar. It requires BOTH the agent-owned marker label AND the
+// reserved name suffix — each is independently reserved against user input in
+// validateCompose, so neither a forged label on a normally-named service nor a
+// reserved-suffix name alone is enough to get a user service stripped here.
+func isGeneratedChownSidecar(name string, svc *ComposeService) bool {
+	return svc != nil &&
+		svc.Labels[chownSidecarLabel] == chownSidecarLabelValue &&
+		strings.HasSuffix(name, chownSidecarSuffix)
 }
 
 // addCompletedDependency adds a `service_completed_successfully` dependency on

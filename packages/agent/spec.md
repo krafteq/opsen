@@ -455,12 +455,14 @@ service), and read-only mounts are skipped; services with a name-based (non-nume
 also skipped since their uid can't be resolved from a generic init image. Re-hardening is
 idempotent — existing sidecars and their `depends_on` edges are regenerated, never stacked.
 
-Generated sidecars carry the marker label `opsen.generated: chown-init`, which is the
-authoritative signal used to find and strip them on re-harden (detection is label-based, never
-name-based, so a user service that merely shares the name shape is never touched). The
-`-opsen-chown-init` name suffix is **reserved**: a user-authored service using it is rejected
-with a policy violation during validation, which also prevents generated names from colliding
-with user services.
+Generated sidecars carry the marker label `opsen.generated: chown-init`. On re-harden a service
+is treated as agent-generated — and stripped — only when it carries **both** that marker label
+**and** the `-opsen-chown-init` name suffix. Both signals are **reserved** against user input:
+`validateCompose` rejects a user-authored service that uses the suffix _or_ sets the
+`opsen.generated` label, each with a clear policy violation. Requiring both signals to strip (and
+reserving both) means no user service can be silently removed by forging either one, and prevents
+generated sidecar names from colliding with user services. `depends_on` edges are stripped only by
+exact membership in the set of removed sidecar names, never by name shape.
 
 > **Ephemeral caches** that never need to persist (e.g. a Chromium crashpad/user-data dir) should
 > instead be emitted as `tmpfs:` by the upstream codegen — tmpfs is writable under a read-only
