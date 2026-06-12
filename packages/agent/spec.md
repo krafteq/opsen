@@ -455,6 +455,13 @@ service), and read-only mounts are skipped; services with a name-based (non-nume
 also skipped since their uid can't be resolved from a generic init image. Re-hardening is
 idempotent — existing sidecars and their `depends_on` edges are regenerated, never stacked.
 
+Generated sidecars carry the marker label `opsen.generated: chown-init`, which is the
+authoritative signal used to find and strip them on re-harden (detection is label-based, never
+name-based, so a user service that merely shares the name shape is never touched). The
+`-opsen-chown-init` name suffix is **reserved**: a user-authored service using it is rejected
+with a policy violation during validation, which also prevents generated names from colliding
+with user services.
+
 > **Ephemeral caches** that never need to persist (e.g. a Chromium crashpad/user-data dir) should
 > instead be emitted as `tmpfs:` by the upstream codegen — tmpfs is writable under a read-only
 > rootfs and owned by the runtime user, needing no chown. The agent only sees the final compose,

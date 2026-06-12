@@ -612,6 +612,64 @@ func TestHardenCompose_ChownSidecarPreservesExistingDependsOn(t *testing.T) {
 	}
 }
 
+func TestHardenCompose_ChownSidecarCarriesMarkerLabel(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app": {Image: "busybox", User: "1000:1000", Volumes: []string{"data:/data"}},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	sidecar := compose.Services["app-opsen-chown-init"]
+	if sidecar == nil {
+		t.Fatal("expected chown sidecar")
+	}
+	if got := sidecar.Labels[chownSidecarLabel]; got != chownSidecarLabelValue {
+		t.Errorf("expected marker label %s=%s, got %q", chownSidecarLabel, chownSidecarLabelValue, got)
+	}
+	if !isGeneratedChownSidecar(sidecar) {
+		t.Error("expected isGeneratedChownSidecar to recognize the generated sidecar")
+	}
+}
+
+func TestValidateCompose_ReservesChownSidecarSuffix(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"worker-opsen-chown-init": {Image: "busybox"},
+		},
+	}
+
+	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose)
+
+	if !hasViolation(violations, "is reserved for agent-generated helpers") {
+		t.Fatalf("expected reserved-suffix violation, got %v", violations)
+	}
+}
+
+func TestHardenCompose_PreservesUserServiceSharingSidecarNameShape(t *testing.T) {
+	// A user-authored service that merely shares the name shape but carries no
+	// agent marker label must NOT be stripped (the suffix is rejected at
+	// validation; on the reconcile path hardening must still leave it intact).
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app":                    {Image: "busybox", DependsOn: []any{"legit-opsen-chown-init"}},
+			"legit-opsen-chown-init": {Image: "busybox"},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	if _, ok := compose.Services["legit-opsen-chown-init"]; !ok {
+		t.Fatal("user service sharing the name shape must not be stripped")
+	}
+	// Its inbound dependency must be preserved (not treated as a sidecar edge).
+	deps := compose.Services["app"].DependsOn
+	if list, ok := deps.([]any); !ok || len(list) != 1 || list[0] != "legit-opsen-chown-init" {
+		t.Errorf("expected user depends_on preserved verbatim, got %#v", deps)
+	}
+}
+
 func TestChownTarget(t *testing.T) {
 	tests := []struct {
 		user string

@@ -10,9 +10,19 @@ import (
 )
 
 // chownSidecarSuffix is appended to a service name to form its ephemeral
-// volume-ownership init sidecar. Used both to generate and to strip sidecars
-// so re-hardening is idempotent.
+// volume-ownership init sidecar. The suffix is reserved against user-authored
+// service names (see validateCompose); generated sidecars are identified for
+// stripping by chownSidecarLabel, not by this suffix.
 const chownSidecarSuffix = "-opsen-chown-init"
+
+// chownSidecarLabel marks a service as an agent-generated chown-init sidecar.
+// It is the authoritative signal used to find and strip previously-injected
+// sidecars on re-harden, and doubles as an audit handle (e.g.
+// `docker ps --filter label=opsen.generated=chown-init`).
+const (
+	chownSidecarLabel      = "opsen.generated"
+	chownSidecarLabelValue = "chown-init"
+)
 
 // defaultChownInitImage is the image used for the ownership init sidecar when
 // GlobalHardening.ChownInitImage is unset. busybox provides a numeric-id chown.
@@ -99,6 +109,13 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 	}
 
 	for name, svc := range compose.Services {
+		// The chown-init sidecar suffix is reserved for agent-generated helpers.
+		// Reject user services using it so hardening never silently removes one
+		// (and so generated sidecar names can't collide with a user service).
+		if strings.HasSuffix(name, chownSidecarSuffix) {
+			violations = append(violations, fmt.Sprintf("service %s: name suffix '%s' is reserved for agent-generated helpers", name, chownSidecarSuffix))
+		}
+
 		if svc.Privileged != nil && *svc.Privileged && cfg.Deny.Privileged {
 			violations = append(violations, fmt.Sprintf("service %s: privileged mode not allowed", name))
 		}
@@ -216,13 +233,20 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 	// Drop any chown-init sidecars (and the depends_on edges pointing at them)
 	// from a previously-hardened compose so re-hardening is idempotent — they are
 	// regenerated from scratch below against the current policy and volume set.
-	for name := range compose.Services {
-		if strings.HasSuffix(name, chownSidecarSuffix) {
+	// Sidecars are identified by the agent-owned marker label, NOT by name suffix,
+	// so a user-authored service that merely shares the name shape is never touched
+	// (the suffix itself is reserved against user services in validateCompose).
+	removedSidecars := make(map[string]bool)
+	for name, svc := range compose.Services {
+		if isGeneratedChownSidecar(svc) {
+			removedSidecars[name] = true
 			delete(compose.Services, name)
 		}
 	}
-	for _, svc := range compose.Services {
-		svc.DependsOn = stripChownDependencies(svc.DependsOn)
+	if len(removedSidecars) > 0 {
+		for _, svc := range compose.Services {
+			svc.DependsOn = stripDependenciesOn(svc.DependsOn, removedSidecars)
+		}
 	}
 
 	// Build a lookup of allocated ports by service name
@@ -618,6 +642,7 @@ func buildChownSidecar(image, ownership string, volumeMounts, targets []string) 
 		CapDrop: []string{"ALL"},
 		CapAdd:  []string{"CHOWN"},
 		Restart: "no",
+		Labels:  map[string]string{chownSidecarLabel: chownSidecarLabelValue},
 		Logging: map[string]any{
 			"driver": "json-file",
 			"options": map[string]string{
@@ -626,6 +651,14 @@ func buildChownSidecar(image, ownership string, volumeMounts, targets []string) 
 			},
 		},
 	}
+}
+
+// isGeneratedChownSidecar reports whether a service is an agent-generated
+// chown-init sidecar, identified by its marker label. Detection is label-based
+// (not name-based) so a user service that happens to share the name shape is
+// never mistaken for a generated helper.
+func isGeneratedChownSidecar(svc *ComposeService) bool {
+	return svc != nil && svc.Labels[chownSidecarLabel] == chownSidecarLabelValue
 }
 
 // addCompletedDependency adds a `service_completed_successfully` dependency on
@@ -661,24 +694,26 @@ func normalizeDependsOn(existing any) map[string]any {
 	return deps
 }
 
-// stripChownDependencies removes any depends_on edges that point at a previously
-// injected chown-init sidecar, so re-hardening doesn't leave dangling references
-// to sidecars that may no longer be regenerated.
-func stripChownDependencies(existing any) any {
-	if existing == nil {
-		return nil
+// stripDependenciesOn removes any depends_on edges that point at one of the
+// removed service names (the agent-generated sidecars stripped on re-harden),
+// so re-hardening doesn't leave dangling references. Edges are matched by exact
+// name membership in removed, never by name shape, so user-authored
+// dependencies are never affected.
+func stripDependenciesOn(existing any, removed map[string]bool) any {
+	if existing == nil || len(removed) == 0 {
+		return existing
 	}
 	deps := normalizeDependsOn(existing)
-	hasChownDep := false
+	changed := false
 	for k := range deps {
-		if strings.HasSuffix(k, chownSidecarSuffix) {
+		if removed[k] {
 			delete(deps, k)
-			hasChownDep = true
+			changed = true
 		}
 	}
-	// Leave a sidecar-free depends_on exactly as authored (e.g. short-list form)
-	// rather than rewriting it to the normalized map form on first deploy.
-	if !hasChownDep {
+	// Leave a depends_on that referenced no removed sidecar exactly as authored
+	// (e.g. short-list form) rather than rewriting it to the normalized map form.
+	if !changed {
 		return existing
 	}
 	if len(deps) == 0 {
