@@ -386,10 +386,11 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 	// volume. For each hardened non-root service that mounts named volumes,
 	// inject an ephemeral `user: "0:0"` sidecar that `chown -R`s those mounts
 	// to the service's uid:gid and exits before the app starts (wired via
-	// depends_on/service_completed_successfully). This keeps root + CHOWN in a
-	// short-lived sidecar instead of the always-on, network-exposed service —
-	// so "run non-root" and "mount a writable volume" stop being mutually
-	// exclusive and `elevated`/`privileged` is no longer needed as a workaround.
+	// depends_on/service_completed_successfully). This keeps root + the narrow
+	// ownership-fixup capabilities in a short-lived sidecar instead of the
+	// always-on, network-exposed service — so "run non-root" and "mount a
+	// writable volume" stop being mutually exclusive and `elevated`/`privileged`
+	// is no longer needed as a workaround.
 	//
 	// The sidecar is built here, AFTER the per-service hardening loop, so the
 	// agent's own `cap_drop: ALL` and CapAdd allow-list filter (which would
@@ -634,9 +635,11 @@ func chownTarget(user string) (string, bool) {
 
 // buildChownSidecar constructs the ephemeral root init sidecar that fixes named
 // volume ownership for a hardened non-root service. It mounts the same named
-// volumes read-write, runs `chown -R <ownership> <targets>` as root with only
-// the CHOWN capability, and exits. It deliberately does NOT carry the global
-// non-root user / read-only rootfs hardening, which would defeat the chown.
+// volumes read-write, runs `chown -R <ownership> <targets>` as root with CHOWN
+// plus DAC_READ_SEARCH so recursive chown can traverse restrictive directories
+// left by earlier root/elevated runs, and exits. It deliberately does NOT carry
+// the global non-root user / read-only rootfs hardening, which would defeat the
+// chown.
 func buildChownSidecar(image, ownership string, volumeMounts, targets []string) *ComposeService {
 	command := append([]string{"chown", "-R", ownership}, targets...)
 	return &ComposeService{
@@ -645,7 +648,7 @@ func buildChownSidecar(image, ownership string, volumeMounts, targets []string) 
 		Command: command,
 		Volumes: volumeMounts,
 		CapDrop: []string{"ALL"},
-		CapAdd:  []string{"CHOWN"},
+		CapAdd:  []string{"CHOWN", "DAC_READ_SEARCH"},
 		Restart: "no",
 		Labels:  map[string]string{chownSidecarLabel: chownSidecarLabelValue},
 		Logging: map[string]any{

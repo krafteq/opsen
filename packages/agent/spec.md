@@ -443,17 +443,19 @@ To fix this, for every hardened service that runs as a **non-root numeric user**
 or more **writable named volumes**, the agent injects an ephemeral sidecar named
 `{service}-opsen-chown-init`:
 
-- `user: "0:0"`, `cap_drop: [ALL]`, `cap_add: [CHOWN]`, `restart: "no"`
+- `user: "0:0"`, `cap_drop: [ALL]`, `cap_add: [CHOWN, DAC_READ_SEARCH]`, `restart: "no"`
 - mounts the same named volumes read-write and runs `chown -R <uid>:<gid> <targets>`, then exits
 - the app service gains `depends_on: { {service}-opsen-chown-init: { condition: service_completed_successfully } }`
 
-root and the `CHOWN` capability therefore live only in a short-lived sidecar, never in the
-always-on service. The sidecar is built **after** the per-service hardening pass, so the global
-`cap_drop: ALL` / capability allow-list (which would strip `CHOWN`) and the read-only rootfs do
-not apply to it. Bind mounts (host-owned), anonymous volumes (not shareable with a separate
-service), and read-only mounts are skipped; services with a name-based (non-numeric) `user:` are
-also skipped since their uid can't be resolved from a generic init image. Re-hardening is
-idempotent — existing sidecars and their `depends_on` edges are regenerated, never stacked.
+root plus the narrow ownership-fixup capabilities therefore live only in a short-lived sidecar,
+never in the always-on service. `CHOWN` permits the ownership change; `DAC_READ_SEARCH` lets the
+recursive walk traverse restrictive directories left by earlier root/elevated runs. The sidecar
+is built **after** the per-service hardening pass, so the global `cap_drop: ALL` / capability
+allow-list and the read-only rootfs do not apply to it. Bind mounts (host-owned), anonymous
+volumes (not shareable with a separate service), and read-only mounts are skipped; services with
+a name-based (non-numeric) `user:` are also skipped since their uid can't be resolved from a
+generic init image. Re-hardening is idempotent — existing sidecars and their `depends_on` edges
+are regenerated, never stacked.
 
 Generated sidecars carry the marker label `opsen.generated: chown-init`. On re-harden a service
 is treated as agent-generated — and stripped — only when it carries **both** that marker label

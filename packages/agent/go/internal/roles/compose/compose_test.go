@@ -453,6 +453,9 @@ func TestHardenCompose_InjectsChownSidecarForNamedVolume(t *testing.T) {
 	if !containsString(sidecar.CapAdd, "CHOWN") {
 		t.Errorf("expected sidecar to cap_add CHOWN, got %v", sidecar.CapAdd)
 	}
+	if !containsString(sidecar.CapAdd, "DAC_READ_SEARCH") {
+		t.Errorf("expected sidecar to cap_add DAC_READ_SEARCH, got %v", sidecar.CapAdd)
+	}
 	if len(sidecar.CapDrop) != 1 || sidecar.CapDrop[0] != "ALL" {
 		t.Errorf("expected sidecar cap_drop ALL, got %v", sidecar.CapDrop)
 	}
