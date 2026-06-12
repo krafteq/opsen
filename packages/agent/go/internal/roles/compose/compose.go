@@ -2,11 +2,21 @@ package compose
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/opsen/agent/internal/config"
 	"gopkg.in/yaml.v3"
 )
+
+// chownSidecarSuffix is appended to a service name to form its ephemeral
+// volume-ownership init sidecar. Used both to generate and to strip sidecars
+// so re-hardening is idempotent.
+const chownSidecarSuffix = "-opsen-chown-init"
+
+// defaultChownInitImage is the image used for the ownership init sidecar when
+// GlobalHardening.ChownInitImage is unset. busybox provides a numeric-id chown.
+const defaultChownInitImage = "busybox"
 
 // ComposeFile represents a parsed docker-compose.yml.
 type ComposeFile struct {
@@ -203,6 +213,18 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 	hardening := cfg.GlobalHardening
 	networkName := fmt.Sprintf("opsen-%s-%s-internal", client.Client, projectSlug)
 
+	// Drop any chown-init sidecars (and the depends_on edges pointing at them)
+	// from a previously-hardened compose so re-hardening is idempotent — they are
+	// regenerated from scratch below against the current policy and volume set.
+	for name := range compose.Services {
+		if strings.HasSuffix(name, chownSidecarSuffix) {
+			delete(compose.Services, name)
+		}
+	}
+	for _, svc := range compose.Services {
+		svc.DependsOn = stripChownDependencies(svc.DependsOn)
+	}
+
 	// Build a lookup of allocated ports by service name
 	bindAddr := ""
 	if client.Compose != nil {
@@ -327,6 +349,53 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 				"max-file": "3",
 			},
 		}
+	}
+
+	// Volume ownership: a hardened service runs as a non-root user under a
+	// read-only rootfs, but Docker initializes a fresh named volume as
+	// root:root 0755, so the injected user gets EACCES on its own declared
+	// volume. For each hardened non-root service that mounts named volumes,
+	// inject an ephemeral `user: "0:0"` sidecar that `chown -R`s those mounts
+	// to the service's uid:gid and exits before the app starts (wired via
+	// depends_on/service_completed_successfully). This keeps root + CHOWN in a
+	// short-lived sidecar instead of the always-on, network-exposed service —
+	// so "run non-root" and "mount a writable volume" stop being mutually
+	// exclusive and `elevated`/`privileged` is no longer needed as a workaround.
+	//
+	// The sidecar is built here, AFTER the per-service hardening loop, so the
+	// agent's own `cap_drop: ALL` and CapAdd allow-list filter (which would
+	// strip the CHOWN capability) and the read-only rootfs do not apply to it.
+	initImage := hardening.ChownInitImage
+	if initImage == "" {
+		initImage = defaultChownInitImage
+	}
+	sidecars := make(map[string]*ComposeService)
+	for name, svc := range compose.Services {
+		ownership, ok := chownTarget(svc.User)
+		if !ok {
+			continue
+		}
+		mounts := namedVolumeMounts(svc.Volumes)
+		if len(mounts) == 0 {
+			continue
+		}
+
+		targets := make([]string, len(mounts))
+		for i, m := range mounts {
+			targets[i] = m.target
+		}
+		volumeMounts := make([]string, len(mounts))
+		for i, m := range mounts {
+			volumeMounts[i] = m.source + ":" + m.target
+		}
+
+		sidecarName := name + chownSidecarSuffix
+		sidecars[sidecarName] = buildChownSidecar(initImage, ownership, volumeMounts, targets)
+		svc.DependsOn = addCompletedDependency(svc.DependsOn, sidecarName)
+		modifications = append(modifications, fmt.Sprintf("%s: injected %s ownership init sidecar (chown %s)", name, sidecarName, ownership))
+	}
+	for n, sc := range sidecars {
+		compose.Services[n] = sc
 	}
 
 	internal := true
@@ -462,4 +531,158 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// volumeMount is a parsed named-volume mount: the volume name and its
+// container-side mount path.
+type volumeMount struct {
+	source string
+	target string
+}
+
+// namedVolumeMounts returns the Docker-managed named-volume mounts from a
+// service's short-syntax volume list. Bind mounts (host paths), anonymous
+// volumes (no source — these are not shareable with a sidecar), and read-only
+// mounts are excluded: only writable named volumes both need and can receive an
+// ownership fixup via a shared sidecar.
+func namedVolumeMounts(volumes []string) []volumeMount {
+	var mounts []volumeMount
+	for _, v := range volumes {
+		parts := strings.Split(v, ":")
+		if len(parts) < 2 {
+			// Single token → anonymous volume; cannot be shared with a sidecar.
+			continue
+		}
+		source, target := parts[0], parts[1]
+		if source == "" || target == "" {
+			continue
+		}
+		// Bind mounts have a path-like source; named volumes are bare names.
+		if strings.Contains(source, "/") || strings.HasPrefix(source, ".") {
+			continue
+		}
+		if len(parts) >= 3 && isReadOnlyMode(parts[2]) {
+			continue
+		}
+		mounts = append(mounts, volumeMount{source: source, target: target})
+	}
+	return mounts
+}
+
+// isReadOnlyMode reports whether a compose volume mode string (e.g. "ro",
+// "ro,z") requests a read-only mount.
+func isReadOnlyMode(mode string) bool {
+	for _, opt := range strings.Split(mode, ",") {
+		if opt == "ro" {
+			return true
+		}
+	}
+	return false
+}
+
+// chownTarget derives the `chown` ownership argument for a service's resolved
+// user. It only applies to non-root numeric users (the form the agent injects
+// via DefaultUser); a name-based user can't be resolved to a numeric id from a
+// generic init image, so those services are skipped (ok=false). A bare uid
+// returns just the uid (group is left as-is — owner permissions already let the
+// process write a 0755 directory it owns).
+func chownTarget(user string) (string, bool) {
+	if user == "" {
+		return "", false
+	}
+	parts := strings.SplitN(user, ":", 2)
+	uid, err := strconv.Atoi(parts[0])
+	if err != nil || uid == 0 {
+		return "", false
+	}
+	if len(parts) == 2 {
+		if gid, err := strconv.Atoi(parts[1]); err == nil {
+			return fmt.Sprintf("%d:%d", uid, gid), true
+		}
+	}
+	return strconv.Itoa(uid), true
+}
+
+// buildChownSidecar constructs the ephemeral root init sidecar that fixes named
+// volume ownership for a hardened non-root service. It mounts the same named
+// volumes read-write, runs `chown -R <ownership> <targets>` as root with only
+// the CHOWN capability, and exits. It deliberately does NOT carry the global
+// non-root user / read-only rootfs hardening, which would defeat the chown.
+func buildChownSidecar(image, ownership string, volumeMounts, targets []string) *ComposeService {
+	command := append([]string{"chown", "-R", ownership}, targets...)
+	return &ComposeService{
+		Image:   image,
+		User:    "0:0",
+		Command: command,
+		Volumes: volumeMounts,
+		CapDrop: []string{"ALL"},
+		CapAdd:  []string{"CHOWN"},
+		Restart: "no",
+		Logging: map[string]any{
+			"driver": "json-file",
+			"options": map[string]string{
+				"max-size": "10m",
+				"max-file": "3",
+			},
+		},
+	}
+}
+
+// addCompletedDependency adds a `service_completed_successfully` dependency on
+// dep to an existing depends_on value, normalizing the short-list form to the
+// long (map) form so the condition can be expressed. Existing short-form
+// dependencies keep their implicit `service_started` semantics.
+func addCompletedDependency(existing any, dep string) any {
+	deps := normalizeDependsOn(existing)
+	deps[dep] = map[string]any{"condition": "service_completed_successfully"}
+	return deps
+}
+
+// normalizeDependsOn converts any supported depends_on representation into the
+// long map form. Unknown shapes yield an empty map.
+func normalizeDependsOn(existing any) map[string]any {
+	deps := make(map[string]any)
+	switch e := existing.(type) {
+	case map[string]any:
+		for k, v := range e {
+			deps[k] = v
+		}
+	case []any:
+		for _, item := range e {
+			if s, ok := item.(string); ok {
+				deps[s] = map[string]any{"condition": "service_started"}
+			}
+		}
+	case []string:
+		for _, s := range e {
+			deps[s] = map[string]any{"condition": "service_started"}
+		}
+	}
+	return deps
+}
+
+// stripChownDependencies removes any depends_on edges that point at a previously
+// injected chown-init sidecar, so re-hardening doesn't leave dangling references
+// to sidecars that may no longer be regenerated.
+func stripChownDependencies(existing any) any {
+	if existing == nil {
+		return nil
+	}
+	deps := normalizeDependsOn(existing)
+	hasChownDep := false
+	for k := range deps {
+		if strings.HasSuffix(k, chownSidecarSuffix) {
+			delete(deps, k)
+			hasChownDep = true
+		}
+	}
+	// Leave a sidecar-free depends_on exactly as authored (e.g. short-list form)
+	// rather than rewriting it to the normalized map form on first deploy.
+	if !hasChownDep {
+		return existing
+	}
+	if len(deps) == 0 {
+		return nil
+	}
+	return deps
 }
