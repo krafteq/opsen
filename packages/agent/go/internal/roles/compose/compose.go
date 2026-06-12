@@ -167,9 +167,31 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 		if policy.PerContainer.MaxCpus > 0 && cpus > policy.PerContainer.MaxCpus {
 			violations = append(violations, fmt.Sprintf("service %s: cpus %.1f exceeds per-container max %.1f", name, cpus, policy.PerContainer.MaxCpus))
 		}
+
+		if svc.PidsLimit != nil && *svc.PidsLimit <= 0 {
+			violations = append(violations, fmt.Sprintf("service %s: pids_limit must be > 0", name))
+		} else {
+			pids := effectivePidsLimit(svc, cfg, policy)
+			if policy.PerContainer.MaxPids > 0 && pids > policy.PerContainer.MaxPids {
+				violations = append(violations, fmt.Sprintf("service %s: pids limit %d exceeds per-container max %d", name, pids, policy.PerContainer.MaxPids))
+			}
+		}
 	}
 
 	return violations
+}
+
+func effectivePidsLimit(svc *ComposeService, cfg *config.AgentConfig, policy *config.ComposePolicy) int {
+	if svc.PidsLimit != nil {
+		return *svc.PidsLimit
+	}
+	if policy != nil && policy.PerContainer.DefaultPids > 0 {
+		return policy.PerContainer.DefaultPids
+	}
+	if cfg != nil && cfg.GlobalHardening.PidLimit > 0 {
+		return cfg.GlobalHardening.PidLimit
+	}
+	return config.DefaultPidLimit
 }
 
 // hardenCompose injects security defaults into all services.
@@ -264,11 +286,8 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 			modifications = append(modifications, fmt.Sprintf("%s: set tmpfs", name))
 		}
 
-		if hardening.PidLimit > 0 {
-			limit := hardening.PidLimit
-			if client.Compose != nil && client.Compose.PerContainer.MaxPids > 0 {
-				limit = client.Compose.PerContainer.MaxPids
-			}
+		if svc.PidsLimit == nil {
+			limit := effectivePidsLimit(svc, cfg, client.Compose)
 			svc.PidsLimit = &limit
 			modifications = append(modifications, fmt.Sprintf("%s: set pids_limit %d", name, limit))
 		}

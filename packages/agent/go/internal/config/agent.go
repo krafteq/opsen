@@ -7,6 +7,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const DefaultPidLimit = 256
+
 type AgentConfig struct {
 	Listen          string          `yaml:"listen"`
 	TLS             TLSConfig       `yaml:"tls"`
@@ -107,6 +109,9 @@ func Load(path string) (*AgentConfig, error) {
 	}
 	if cfg.ClientsDir == "" {
 		cfg.ClientsDir = "/etc/opsen-agent/clients/"
+	}
+	if cfg.GlobalHardening.PidLimit == 0 {
+		cfg.GlobalHardening.PidLimit = DefaultPidLimit
 	}
 
 	return cfg, nil

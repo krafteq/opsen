@@ -104,6 +104,7 @@ export interface ComposePolicy {
 export interface PerContainerLimits {
   defaultMemoryMb?: pulumi.Input<number>
   defaultCpus?: pulumi.Input<number>
+  defaultPids?: pulumi.Input<number>
   maxMemoryMb?: pulumi.Input<number>
   maxCpus?: pulumi.Input<number>
   maxPids?: pulumi.Input<number>

@@ -66,7 +66,7 @@ export function serializeAgentConfig(config: pulumi.Unwrap<AgentConfig>): string
     read_only_rootfs: hardening?.readOnlyRootfs ?? true,
     default_user: hardening?.defaultUser ?? '1000:1000',
     default_tmpfs: hardening?.defaultTmpfs ?? [{ path: '/tmp', options: 'noexec,nosuid,size=64m' }],
-    pid_limit: hardening?.pidLimit ?? 100,
+    pid_limit: hardening?.pidLimit ?? 256,
   }
 
   const deny = config.deny

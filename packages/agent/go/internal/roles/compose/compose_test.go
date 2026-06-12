@@ -10,6 +10,10 @@ import (
 func minimalConfig() *config.AgentConfig {
 	return &config.AgentConfig{
 		GlobalHardening: config.GlobalHardening{},
+		Deny: config.DenyRules{
+			PidMode: "host",
+			IpcMode: "host",
+		},
 	}
 }
 
@@ -18,6 +22,19 @@ func minimalClient(name string) *config.ClientPolicy {
 		Client:  name,
 		Compose: &config.ComposePolicy{},
 	}
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
+func hasViolation(violations []string, want string) bool {
+	for _, violation := range violations {
+		if strings.Contains(violation, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHardenCompose_NetworkIsProjectScoped(t *testing.T) {
@@ -178,6 +195,126 @@ func TestHardenCompose_NoPortMappings(t *testing.T) {
 
 	if len(compose.Services["worker"].Ports) != 0 {
 		t.Errorf("expected no ports on worker, got %v", compose.Services["worker"].Ports)
+	}
+}
+
+func TestValidateCompose_PidsLimitWithinCap(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox", PidsLimit: intPtr(200)},
+		},
+	}
+	cfg := minimalConfig()
+	client := minimalClient("c1")
+	client.Compose.PerContainer.MaxPids = 256
+
+	violations := validateCompose(compose, cfg, client.Compose)
+
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %v", violations)
+	}
+}
+
+func TestValidateCompose_PidsLimitOverCap(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox", PidsLimit: intPtr(300)},
+		},
+	}
+	cfg := minimalConfig()
+	client := minimalClient("c1")
+	client.Compose.PerContainer.MaxPids = 256
+
+	violations := validateCompose(compose, cfg, client.Compose)
+
+	if !hasViolation(violations, "service web: pids limit 300 exceeds per-container max 256") {
+		t.Fatalf("expected pids cap violation, got %v", violations)
+	}
+}
+
+func TestValidateCompose_PidsLimitNonPositive(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox", PidsLimit: intPtr(0)},
+		},
+	}
+	cfg := minimalConfig()
+	client := minimalClient("c1")
+
+	violations := validateCompose(compose, cfg, client.Compose)
+
+	if !hasViolation(violations, "service web: pids_limit must be > 0") {
+		t.Fatalf("expected non-positive pids violation, got %v", violations)
+	}
+}
+
+func TestValidateCompose_DefaultPidsOverCap(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox"},
+		},
+	}
+	cfg := minimalConfig()
+	client := minimalClient("c1")
+	client.Compose.PerContainer.DefaultPids = 300
+	client.Compose.PerContainer.MaxPids = 256
+
+	violations := validateCompose(compose, cfg, client.Compose)
+
+	if !hasViolation(violations, "service web: pids limit 300 exceeds per-container max 256") {
+		t.Fatalf("expected default pids cap violation, got %v", violations)
+	}
+}
+
+func TestHardenCompose_PidsLimitPrecedence(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"custom":    {Image: "busybox", PidsLimit: intPtr(128)},
+			"defaulted": {Image: "busybox"},
+		},
+	}
+	cfg := minimalConfig()
+	cfg.GlobalHardening.PidLimit = 256
+	client := minimalClient("c1")
+	client.Compose.PerContainer.DefaultPids = 384
+
+	hardenCompose(compose, cfg, client, "p", nil)
+
+	if got := *compose.Services["custom"].PidsLimit; got != 128 {
+		t.Errorf("expected service pids_limit to be preserved, got %d", got)
+	}
+	if got := *compose.Services["defaulted"].PidsLimit; got != 384 {
+		t.Errorf("expected default_pids to be applied, got %d", got)
+	}
+}
+
+func TestHardenCompose_PidsLimitFallsBackToGlobalThenBuiltInDefault(t *testing.T) {
+	client := minimalClient("c1")
+
+	globalCompose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox"},
+		},
+	}
+	globalCfg := minimalConfig()
+	globalCfg.GlobalHardening.PidLimit = 512
+
+	hardenCompose(globalCompose, globalCfg, client, "p", nil)
+
+	if got := *globalCompose.Services["web"].PidsLimit; got != 512 {
+		t.Errorf("expected global pid_limit fallback, got %d", got)
+	}
+
+	builtInCompose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"web": {Image: "busybox"},
+		},
+	}
+
+	hardenCompose(builtInCompose, minimalConfig(), client, "p", nil)
+
+	if got := *builtInCompose.Services["web"].PidsLimit; got != config.DefaultPidLimit {
+		t.Errorf("expected built-in pids default %d, got %d", config.DefaultPidLimit, got)
 	}
 }
 
