@@ -33,8 +33,8 @@ type ComposePolicy struct {
 	PerContainer PerContainerLimits `yaml:"per_container"`
 
 	// Per-project limits
-	MaxServices int  `yaml:"max_services"`
-	AllowBuild  bool `yaml:"allow_build"`
+	MaxServices  int  `yaml:"max_services"`
+	AllowBuild   bool `yaml:"allow_build"`
 	AllowEnvFile bool `yaml:"allow_env_file"`
 
 	// Policies
@@ -47,6 +47,7 @@ type ComposePolicy struct {
 type PerContainerLimits struct {
 	DefaultMemoryMb int     `yaml:"default_memory_mb"`
 	DefaultCpus     float64 `yaml:"default_cpus"`
+	DefaultPids     int     `yaml:"default_pids"`
 	MaxMemoryMb     int     `yaml:"max_memory_mb"`
 	MaxCpus         float64 `yaml:"max_cpus"`
 	MaxPids         int     `yaml:"max_pids"`
@@ -121,9 +122,9 @@ type MiddlewarePolicy struct {
 
 type DbPolicy struct {
 	// Cross-database limits
-	MaxDatabases    int `yaml:"max_databases"`
-	MaxTotalSizeMb  int `yaml:"max_total_size_mb"`
-	MaxTotalConns   int `yaml:"max_total_connections"`
+	MaxDatabases   int `yaml:"max_databases"`
+	MaxTotalSizeMb int `yaml:"max_total_size_mb"`
+	MaxTotalConns  int `yaml:"max_total_connections"`
 
 	// Per-database limits
 	PerDatabase PerDatabaseLimits `yaml:"per_database"`

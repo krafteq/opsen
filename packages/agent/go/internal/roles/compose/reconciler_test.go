@@ -51,6 +51,21 @@ func TestPolicyHash_ChangesOnHardening(t *testing.T) {
 	}
 }
 
+func TestPolicyHash_ChangesOnDefaultPids(t *testing.T) {
+	cfg := minimalConfig()
+	client := minimalClient("c1")
+
+	client.Compose.PerContainer.DefaultPids = 256
+	h1 := policyHash(client, cfg)
+
+	client.Compose.PerContainer.DefaultPids = 384
+	h2 := policyHash(client, cfg)
+
+	if h1 == h2 {
+		t.Error("expected different hash when default_pids changes")
+	}
+}
+
 func TestPolicyHash_ChangesOnTmpfs(t *testing.T) {
 	cfg := minimalConfig()
 	client := minimalClient("c1")

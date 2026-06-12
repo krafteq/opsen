@@ -154,6 +154,7 @@ func policyHash(client *config.ClientPolicy, cfg *config.AgentConfig) string {
 		fmt.Fprintf(h, "bind=%s\n", client.Compose.Network.IngressBindAddress)
 		fmt.Fprintf(h, "internet=%v\n", client.Compose.Network.InternetAccess)
 		fmt.Fprintf(h, "defaultmem=%d\n", client.Compose.PerContainer.DefaultMemoryMb)
+		fmt.Fprintf(h, "defaultpids=%d\n", client.Compose.PerContainer.DefaultPids)
 		fmt.Fprintf(h, "maxpids=%d\n", client.Compose.PerContainer.MaxPids)
 	}
 
