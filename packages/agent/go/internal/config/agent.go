@@ -65,6 +65,11 @@ type GlobalHardening struct {
 	DefaultUser     string       `yaml:"default_user"`
 	DefaultTmpfs    []TmpfsMount `yaml:"default_tmpfs"`
 	PidLimit        int          `yaml:"pid_limit"`
+	// ChownInitImage is the image used for the ephemeral root sidecar that
+	// fixes named-volume ownership for hardened non-root services. Must be able
+	// to run `chown -R <uid>:<gid> <paths>` (a busybox-compatible image).
+	// Defaults to "busybox" when empty.
+	ChownInitImage string `yaml:"chown_init_image"`
 }
 
 type TmpfsMount struct {

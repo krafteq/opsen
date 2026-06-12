@@ -421,6 +421,349 @@ func TestHardenCompose_TmpfsStringType(t *testing.T) {
 	}
 }
 
+func TestHardenCompose_InjectsChownSidecarForNamedVolume(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app": {
+				Image:   "ghcr.io/myorg/app",
+				Volumes: []string{"uploads:/data/uploads"},
+			},
+		},
+		Volumes: map[string]any{"uploads": nil},
+	}
+
+	cfg := minimalConfig()
+	cfg.GlobalHardening.DefaultUser = "10001:10002"
+	cfg.GlobalHardening.CapDropAll = true
+	cfg.GlobalHardening.ReadOnlyRootfs = true
+
+	hardenCompose(compose, cfg, minimalClient("c1"), "p", nil)
+
+	sidecar, ok := compose.Services["app-opsen-chown-init"]
+	if !ok {
+		t.Fatalf("expected chown init sidecar, services: %v", keys(compose.Services))
+	}
+
+	if sidecar.User != "0:0" {
+		t.Errorf("expected sidecar user 0:0, got %q", sidecar.User)
+	}
+	if sidecar.Image != "busybox" {
+		t.Errorf("expected default sidecar image busybox, got %q", sidecar.Image)
+	}
+	if !containsString(sidecar.CapAdd, "CHOWN") {
+		t.Errorf("expected sidecar to cap_add CHOWN, got %v", sidecar.CapAdd)
+	}
+	if !containsString(sidecar.CapAdd, "DAC_READ_SEARCH") {
+		t.Errorf("expected sidecar to cap_add DAC_READ_SEARCH, got %v", sidecar.CapAdd)
+	}
+	if len(sidecar.CapDrop) != 1 || sidecar.CapDrop[0] != "ALL" {
+		t.Errorf("expected sidecar cap_drop ALL, got %v", sidecar.CapDrop)
+	}
+	if sidecar.ReadOnly != nil {
+		t.Errorf("expected sidecar to NOT inherit read_only rootfs, got %v", *sidecar.ReadOnly)
+	}
+	if sidecar.Restart != "no" {
+		t.Errorf("expected sidecar restart 'no', got %q", sidecar.Restart)
+	}
+
+	cmd, ok := sidecar.Command.([]string)
+	if !ok {
+		t.Fatalf("expected sidecar command []string, got %T", sidecar.Command)
+	}
+	want := []string{"chown", "-R", "10001:10002", "/data/uploads"}
+	if strings.Join(cmd, " ") != strings.Join(want, " ") {
+		t.Errorf("expected command %v, got %v", want, cmd)
+	}
+
+	if len(sidecar.Volumes) != 1 || sidecar.Volumes[0] != "uploads:/data/uploads" {
+		t.Errorf("expected sidecar to mount the named volume rw, got %v", sidecar.Volumes)
+	}
+
+	// The app service must wait for the sidecar to complete successfully.
+	deps, ok := compose.Services["app"].DependsOn.(map[string]any)
+	if !ok {
+		t.Fatalf("expected app depends_on map, got %T", compose.Services["app"].DependsOn)
+	}
+	dep, ok := deps["app-opsen-chown-init"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected depends_on entry for sidecar, got %v", deps)
+	}
+	if dep["condition"] != "service_completed_successfully" {
+		t.Errorf("expected service_completed_successfully, got %v", dep["condition"])
+	}
+}
+
+func TestHardenCompose_NoSidecarForBindOrAnonOrReadOnly(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"bind":  {Image: "busybox", User: "1000:1000", Volumes: []string{"/data/host:/data"}},
+			"rel":   {Image: "busybox", User: "1000:1000", Volumes: []string{"./local:/data"}},
+			"anon":  {Image: "busybox", User: "1000:1000", Volumes: []string{"/data"}},
+			"rovol": {Image: "busybox", User: "1000:1000", Volumes: []string{"cache:/data:ro"}},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	for _, name := range []string{"bind", "rel", "anon", "rovol"} {
+		if _, ok := compose.Services[name+chownSidecarSuffix]; ok {
+			t.Errorf("did not expect a chown sidecar for service %q", name)
+		}
+	}
+}
+
+func TestHardenCompose_NoSidecarForRootService(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			// No DefaultUser configured and none declared → service stays root.
+			"root": {Image: "busybox", Volumes: []string{"data:/data"}},
+			// Explicit root.
+			"explicit": {Image: "busybox", User: "0:0", Volumes: []string{"data:/data"}},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	if _, ok := compose.Services["root"+chownSidecarSuffix]; ok {
+		t.Error("did not expect a chown sidecar for a root service")
+	}
+	if _, ok := compose.Services["explicit"+chownSidecarSuffix]; ok {
+		t.Error("did not expect a chown sidecar for an explicit-root service")
+	}
+}
+
+func TestHardenCompose_ChownSidecarUsesConfiguredImage(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app": {Image: "busybox", User: "1000", Volumes: []string{"data:/data"}},
+		},
+	}
+
+	cfg := minimalConfig()
+	cfg.GlobalHardening.ChownInitImage = "registry.internal/util/busybox:1.36"
+
+	hardenCompose(compose, cfg, minimalClient("c1"), "p", nil)
+
+	sidecar := compose.Services["app-opsen-chown-init"]
+	if sidecar == nil {
+		t.Fatal("expected chown sidecar")
+	}
+	if sidecar.Image != "registry.internal/util/busybox:1.36" {
+		t.Errorf("expected configured init image, got %q", sidecar.Image)
+	}
+	// Bare uid → chown owner only.
+	cmd := sidecar.Command.([]string)
+	if cmd[2] != "1000" {
+		t.Errorf("expected bare uid '1000' for chown owner, got %q", cmd[2])
+	}
+}
+
+func TestHardenCompose_ChownSidecarIsIdempotent(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app": {Image: "busybox", User: "1000:1000", Volumes: []string{"data:/data"}},
+		},
+	}
+	client := minimalClient("c1")
+
+	hardenCompose(compose, minimalConfig(), client, "p", nil)
+	first := keys(compose.Services)
+
+	// Re-hardening the already-hardened compose (as the reconciler does) must
+	// not stack a second sidecar nor a sidecar-for-the-sidecar.
+	hardenCompose(compose, minimalConfig(), client, "p", nil)
+	second := keys(compose.Services)
+
+	if len(first) != 2 || len(second) != 2 {
+		t.Fatalf("expected exactly app + one sidecar both times, got %v then %v", first, second)
+	}
+	if _, ok := compose.Services["app-opsen-chown-init-opsen-chown-init"]; ok {
+		t.Error("must not generate a sidecar for the sidecar")
+	}
+
+	deps := compose.Services["app"].DependsOn.(map[string]any)
+	if len(deps) != 1 {
+		t.Errorf("expected exactly one depends_on edge after re-harden, got %v", deps)
+	}
+}
+
+func TestHardenCompose_ChownSidecarPreservesExistingDependsOn(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app": {
+				Image:     "busybox",
+				User:      "1000:1000",
+				Volumes:   []string{"data:/data"},
+				DependsOn: []any{"db"},
+			},
+			"db": {Image: "postgres"},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	deps := compose.Services["app"].DependsOn.(map[string]any)
+	db, ok := deps["db"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected db dependency preserved as map, got %v", deps["db"])
+	}
+	if db["condition"] != "service_started" {
+		t.Errorf("expected existing short-form dep to become service_started, got %v", db["condition"])
+	}
+	if _, ok := deps["app-opsen-chown-init"]; !ok {
+		t.Errorf("expected sidecar dependency added alongside db, got %v", deps)
+	}
+}
+
+func TestHardenCompose_ChownSidecarCarriesMarkerLabel(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app": {Image: "busybox", User: "1000:1000", Volumes: []string{"data:/data"}},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	sidecar := compose.Services["app-opsen-chown-init"]
+	if sidecar == nil {
+		t.Fatal("expected chown sidecar")
+	}
+	if got := sidecar.Labels[chownSidecarLabel]; got != chownSidecarLabelValue {
+		t.Errorf("expected marker label %s=%s, got %q", chownSidecarLabel, chownSidecarLabelValue, got)
+	}
+	if !isGeneratedChownSidecar("app-opsen-chown-init", sidecar) {
+		t.Error("expected isGeneratedChownSidecar to recognize the generated sidecar")
+	}
+	// Neither signal alone counts as agent-generated.
+	if isGeneratedChownSidecar("not-a-sidecar", sidecar) {
+		t.Error("marker label without the reserved suffix must not count as generated")
+	}
+	plain := &ComposeService{Image: "busybox"}
+	if isGeneratedChownSidecar("app-opsen-chown-init", plain) {
+		t.Error("reserved suffix without the marker label must not count as generated")
+	}
+}
+
+func TestValidateCompose_ReservesChownSidecarLabel(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			// Normal name, but forges the agent-owned marker label.
+			"worker": {Image: "busybox", Labels: map[string]string{chownSidecarLabel: chownSidecarLabelValue}},
+		},
+	}
+
+	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose)
+
+	if !hasViolation(violations, "label 'opsen.generated' is reserved for agent-generated helpers") {
+		t.Fatalf("expected reserved-label violation, got %v", violations)
+	}
+}
+
+func TestHardenCompose_PreservesUserServiceWithForgedLabel(t *testing.T) {
+	// A normally-named user service that forges the marker label must NOT be
+	// stripped during hardening (it is rejected at validation, but hardening on
+	// the reconcile path must still leave it intact since it lacks the suffix).
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"worker": {Image: "busybox", Labels: map[string]string{chownSidecarLabel: chownSidecarLabelValue}},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	if _, ok := compose.Services["worker"]; !ok {
+		t.Fatal("user service with a forged marker label but normal name must not be stripped")
+	}
+}
+
+func TestValidateCompose_ReservesChownSidecarSuffix(t *testing.T) {
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"worker-opsen-chown-init": {Image: "busybox"},
+		},
+	}
+
+	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose)
+
+	if !hasViolation(violations, "is reserved for agent-generated helpers") {
+		t.Fatalf("expected reserved-suffix violation, got %v", violations)
+	}
+}
+
+func TestHardenCompose_PreservesUserServiceSharingSidecarNameShape(t *testing.T) {
+	// A user-authored service that merely shares the name shape but carries no
+	// agent marker label must NOT be stripped (the suffix is rejected at
+	// validation; on the reconcile path hardening must still leave it intact).
+	compose := &ComposeFile{
+		Services: map[string]*ComposeService{
+			"app":                    {Image: "busybox", DependsOn: []any{"legit-opsen-chown-init"}},
+			"legit-opsen-chown-init": {Image: "busybox"},
+		},
+	}
+
+	hardenCompose(compose, minimalConfig(), minimalClient("c1"), "p", nil)
+
+	if _, ok := compose.Services["legit-opsen-chown-init"]; !ok {
+		t.Fatal("user service sharing the name shape must not be stripped")
+	}
+	// Its inbound dependency must be preserved (not treated as a sidecar edge).
+	deps := compose.Services["app"].DependsOn
+	if list, ok := deps.([]any); !ok || len(list) != 1 || list[0] != "legit-opsen-chown-init" {
+		t.Errorf("expected user depends_on preserved verbatim, got %#v", deps)
+	}
+}
+
+func TestChownTarget(t *testing.T) {
+	tests := []struct {
+		user string
+		want string
+		ok   bool
+	}{
+		{"", "", false},
+		{"0", "", false},
+		{"0:0", "", false},
+		{"1000", "1000", true},
+		{"1000:1000", "1000:1000", true},
+		{"10001:20002", "10001:20002", true},
+		{"node", "", false},
+		{"1000:node", "1000", true},
+	}
+	for _, tt := range tests {
+		got, ok := chownTarget(tt.user)
+		if ok != tt.ok || got != tt.want {
+			t.Errorf("chownTarget(%q) = (%q, %v), want (%q, %v)", tt.user, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestNamedVolumeMounts(t *testing.T) {
+	got := namedVolumeMounts([]string{
+		"uploads:/data/uploads",
+		"/host/path:/data",
+		"./local:/data",
+		"/anon",
+		"cache:/var/cache:ro",
+		"shared:/srv:rw",
+	})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 named writable mounts, got %d: %+v", len(got), got)
+	}
+	if got[0].source != "uploads" || got[0].target != "/data/uploads" {
+		t.Errorf("unexpected first mount: %+v", got[0])
+	}
+	if got[1].source != "shared" || got[1].target != "/srv" {
+		t.Errorf("unexpected second mount: %+v", got[1])
+	}
+}
+
+func keys(m map[string]*ComposeService) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestParseTmpfsEntries(t *testing.T) {
 	tests := []struct {
 		name  string

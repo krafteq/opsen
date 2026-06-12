@@ -103,7 +103,7 @@ The `files` field is a map of `relative path -> content`. The agent looks for a 
 4. Validate against deny-list rules (global) and client policy
 5. Calculate resource usage (containers, memory, CPU)
 6. Check cross-project resource budget via ResourceTracker
-7. Apply hardening (security_opt, cap_drop, read_only, tmpfs, pids_limit, user, logging, network isolation)
+7. Apply hardening (security_opt, cap_drop, read_only, tmpfs, pids_limit, user, logging, network isolation, named-volume ownership init sidecars)
 8. Write ALL files to project directory (sanitized paths, no path traversal)
 9. Write hardened compose file (replaces original)
 10. Run: docker compose -p opsen-{client}-{project} -f {path} up -d --remove-orphans
@@ -423,12 +423,54 @@ Applied to every container after validation, configured in `agent.yaml`:
 | `default_user`      | `"1000:1000"`                                         | Sets `user: 1000:1000` if not explicitly set — prevents running as root          |
 | `default_tmpfs`     | `[{path: "/tmp", options: "noexec,nosuid,size=64m"}]` | Mounts writable tmpfs with restricted options                                    |
 | `pid_limit`         | `100`                                                 | Sets `pids_limit` — prevents fork bombs                                          |
+| `chown_init_image`  | `"busybox"`                                           | Image for the named-volume ownership init sidecar (see below)                    |
 
 Additional forced modifications:
 
 - **Logging**: forced to `json-file` driver with `max-size: 10m`, `max-file: 3` (prevents log bomb DoS)
 - **Network isolation**: all service-defined networks are replaced with a single project network named `opsen-{client}-internal`, set to `--internal` (no internet) unless client policy explicitly allows `internet_access`
 - **Stripped fields**: `network_mode`, `pid`, `ipc`, `userns_mode` are blanked on all services
+
+#### Named-Volume Ownership Init Sidecars
+
+`default_user` + `read_only_rootfs` force a service to run as a non-root user on a read-only
+rootfs, but Docker initializes a fresh **named volume** as `root:root 0755`, so the injected
+user gets `EACCES` on its own declared volume/cache. Historically the only escape was running
+the long-lived, network-exposed container as root (`elevated`/`privileged`), defeating the
+point of non-root hardening.
+
+To fix this, for every hardened service that runs as a **non-root numeric user** and mounts one
+or more **writable named volumes**, the agent injects an ephemeral sidecar named
+`{service}-opsen-chown-init`:
+
+- `user: "0:0"`, `cap_drop: [ALL]`, `cap_add: [CHOWN, DAC_READ_SEARCH]`, `restart: "no"`
+- mounts the same named volumes read-write and runs `chown -R <uid>:<gid> <targets>`, then exits
+- the app service gains `depends_on: { {service}-opsen-chown-init: { condition: service_completed_successfully } }`
+
+root plus the narrow ownership-fixup capabilities therefore live only in a short-lived sidecar,
+never in the always-on service. `CHOWN` permits the ownership change; `DAC_READ_SEARCH` lets the
+recursive walk traverse restrictive directories left by earlier root/elevated runs. The sidecar
+is built **after** the per-service hardening pass, so the global `cap_drop: ALL` / capability
+allow-list and the read-only rootfs do not apply to it. Bind mounts (host-owned), anonymous
+volumes (not shareable with a separate service), and read-only mounts are skipped; services with
+a name-based (non-numeric) `user:` are also skipped since their uid can't be resolved from a
+generic init image. Re-hardening is idempotent — existing sidecars and their `depends_on` edges
+are regenerated, never stacked.
+
+Generated sidecars carry the marker label `opsen.generated: chown-init`. On re-harden a service
+is treated as agent-generated — and stripped — only when it carries **both** that marker label
+**and** the `-opsen-chown-init` name suffix. Both signals are **reserved** against user input:
+`validateCompose` rejects a user-authored service that uses the suffix _or_ sets the
+`opsen.generated` label, each with a clear policy violation. Requiring both signals to strip (and
+reserving both) means no user service can be silently removed by forging either one, and prevents
+generated sidecar names from colliding with user services. `depends_on` edges are stripped only by
+exact membership in the set of removed sidecar names, never by name shape.
+
+> **Ephemeral caches** that never need to persist (e.g. a Chromium crashpad/user-data dir) should
+> instead be emitted as `tmpfs:` by the upstream codegen — tmpfs is writable under a read-only
+> rootfs and owned by the runtime user, needing no chown. The agent only sees the final compose,
+> so it cannot tell an ephemeral cache from a persistent volume; that signal must come from the
+> workload description.
 
 ### Per-Client Compose Policy
 
@@ -716,6 +758,7 @@ global_hardening:
     - path: /tmp
       options: 'noexec,nosuid,size=64m'
   pid_limit: 100
+  chown_init_image: 'busybox' # image for named-volume ownership init sidecars
 
 deny:
   privileged: true

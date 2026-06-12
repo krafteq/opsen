@@ -165,6 +165,7 @@ func policyHash(client *config.ClientPolicy, cfg *config.AgentConfig) string {
 	fmt.Fprintf(h, "readonly=%v\n", gh.ReadOnlyRootfs)
 	fmt.Fprintf(h, "defaultuser=%s\n", gh.DefaultUser)
 	fmt.Fprintf(h, "pidlimit=%d\n", gh.PidLimit)
+	fmt.Fprintf(h, "chowninit=%s\n", gh.ChownInitImage)
 	for _, t := range gh.DefaultTmpfs {
 		fmt.Fprintf(h, "tmpfs=%s:%s\n", t.Path, t.Options)
 	}
