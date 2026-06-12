@@ -67,6 +67,7 @@ export function serializeAgentConfig(config: pulumi.Unwrap<AgentConfig>): string
     default_user: hardening?.defaultUser ?? '1000:1000',
     default_tmpfs: hardening?.defaultTmpfs ?? [{ path: '/tmp', options: 'noexec,nosuid,size=64m' }],
     pid_limit: hardening?.pidLimit ?? 256,
+    chown_init_image: hardening?.chownInitImage ?? 'busybox',
   }
 
   const deny = config.deny

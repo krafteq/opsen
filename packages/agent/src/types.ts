@@ -53,6 +53,13 @@ export interface GlobalHardening {
   defaultUser?: pulumi.Input<string>
   defaultTmpfs?: pulumi.Input<pulumi.Input<TmpfsMount>[]>
   pidLimit?: pulumi.Input<number>
+  /**
+   * Image for the ephemeral root sidecar that fixes named-volume ownership for
+   * hardened non-root services. Must be able to run `chown -R <uid>:<gid> <paths>`
+   * (a busybox-compatible image). Point this at an internal-registry mirror for
+   * air-gapped or registry-restricted hosts. Defaults to `busybox`.
+   */
+  chownInitImage?: pulumi.Input<string>
 }
 
 export interface TmpfsMount {

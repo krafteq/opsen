@@ -26,6 +26,31 @@ describe('agent config serialization', () => {
 
     expect(yaml).toContain('pid_limit: 512')
   })
+
+  it('defaults the chown_init_image to busybox', () => {
+    const yaml = serializeAgentConfig({
+      listen: '0.0.0.0:8443',
+      roles: {
+        compose: {},
+      },
+    })
+
+    expect(yaml).toContain('chown_init_image: busybox')
+  })
+
+  it('preserves an explicit chown_init_image', () => {
+    const yaml = serializeAgentConfig({
+      listen: '0.0.0.0:8443',
+      roles: {
+        compose: {},
+      },
+      globalHardening: {
+        chownInitImage: 'registry.internal/util/busybox:1.36',
+      },
+    })
+
+    expect(yaml).toContain('chown_init_image: "registry.internal/util/busybox:1.36"')
+  })
 })
 
 describe('client policy serialization', () => {
