@@ -41,7 +41,9 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-build`,
       {
         dir: GO_SRC_DIR,
-        create: `docker build --build-arg VERSION=${PKG_VERSION} -f Dockerfile.build -o type=local,dest=./out . 2>&1 && sha256sum ./out/opsen-agent | cut -d" " -f1`,
+        // `test -s` guards against a docker build that "succeeds" but writes no/empty
+        // artifact to ./out — without it an empty binary flows downstream undetected.
+        create: `docker build --build-arg VERSION=${PKG_VERSION} -f Dockerfile.build -o type=local,dest=./out . 2>&1 && test -s ./out/opsen-agent && sha256sum ./out/opsen-agent | cut -d" " -f1`,
         triggers: [sourceHash],
       },
       { parent: this },
@@ -50,18 +52,28 @@ export class AgentInstaller extends pulumi.ComponentResource {
     const binHash = build.stdout.apply((out) => out.trim().split('\n').pop()!.trim())
 
     // ─── Setup remote directories + user ────────────────
-    const setupCommands = pulumi.output(args.config).apply((config) => {
-      const cmds = [
-        'set -e',
-        'id -u opsen-agent &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin opsen-agent',
-        'mkdir -p /etc/opsen-agent/clients /var/lib/opsen-agent/deployments /var/lib/opsen-agent/db /var/log/opsen-agent',
-        'chown -R opsen-agent:opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
-      ]
-      if (config.roles?.ingress?.configDir) {
-        cmds.push(`chown opsen-agent:opsen-agent ${config.roles.ingress.configDir}`)
-      }
-      return cmds
-    })
+    const setupCommands = pulumi
+      .all([pulumi.output(args.config), pulumi.output(connUser ?? 'root')])
+      .apply(([config, user]) => {
+        const cmds = [
+          'set -e',
+          'id -u opsen-agent &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin opsen-agent',
+          'mkdir -p /etc/opsen-agent/clients /var/lib/opsen-agent/deployments /var/lib/opsen-agent/db /var/log/opsen-agent',
+          'chown -R opsen-agent:opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
+          // Client policies are written via MirrorState (the clientMirror below), which
+          // uploads over plain SFTP as the SSH user with no privilege escalation. Hand the
+          // staging dir and the parent of the `clients` symlink to the connection user so
+          // those writes succeed on non-root targets. Chown /etc/opsen-agent non-recursively
+          // so agent.yaml/*.pem inside keep their opsen-agent ownership. No-op as root.
+          // Mirrors ComposeProject's prep in @opsen/docker-compose (docker-compose.ts).
+          'mkdir -p /var/lib/mirror-state',
+          `chown ${user}:${user} /var/lib/mirror-state /etc/opsen-agent`,
+        ]
+        if (config.roles?.ingress?.configDir) {
+          cmds.push(`chown opsen-agent:opsen-agent ${config.roles.ingress.configDir}`)
+        }
+        return cmds
+      })
 
     const setup = new command.remote.Command(
       `${name}-setup`,
@@ -120,7 +132,21 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-chmod`,
       {
         connection: conn,
-        create: sudo(connUser, 'mv /tmp/opsen-agent /usr/local/bin/opsen-agent && chmod +x /usr/local/bin/opsen-agent'),
+        // The local build artifact lives inside node_modules and can be silently emptied by
+        // a dependency reinstall (`rm -rf node_modules && npm install`); promoting a 0-byte
+        // file yields a crash-looping agent (status=203/EXEC) with no apply-time signal.
+        // Refuse an empty upload *before* clobbering a known-good binary, then verify the
+        // promoted binary actually executes on this host so a bad artifact fails the apply
+        // loudly instead of silently shipping a dead agent.
+        create: sudo(
+          connUser,
+          [
+            'test -s /tmp/opsen-agent || { echo "opsen-agent upload is empty — refusing to install (stale/empty build artifact?)" >&2; exit 1; }',
+            'mv /tmp/opsen-agent /usr/local/bin/opsen-agent',
+            'chmod +x /usr/local/bin/opsen-agent',
+            '/usr/local/bin/opsen-agent --version >/dev/null 2>&1 || { echo "installed opsen-agent failed to execute (--version)" >&2; exit 1; }',
+          ].join('\n'),
+        ),
         triggers: [binHash],
       },
       { parent: this, dependsOn: [binary] },
