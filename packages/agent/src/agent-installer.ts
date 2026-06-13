@@ -41,7 +41,9 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-build`,
       {
         dir: GO_SRC_DIR,
-        create: `docker build --build-arg VERSION=${PKG_VERSION} -f Dockerfile.build -o type=local,dest=./out . 2>&1 && sha256sum ./out/opsen-agent | cut -d" " -f1`,
+        // `test -s` guards against a docker build that "succeeds" but writes no/empty
+        // artifact to ./out — without it an empty binary flows downstream undetected.
+        create: `docker build --build-arg VERSION=${PKG_VERSION} -f Dockerfile.build -o type=local,dest=./out . 2>&1 && test -s ./out/opsen-agent && sha256sum ./out/opsen-agent | cut -d" " -f1`,
         triggers: [sourceHash],
       },
       { parent: this },
@@ -130,7 +132,21 @@ export class AgentInstaller extends pulumi.ComponentResource {
       `${name}-chmod`,
       {
         connection: conn,
-        create: sudo(connUser, 'mv /tmp/opsen-agent /usr/local/bin/opsen-agent && chmod +x /usr/local/bin/opsen-agent'),
+        // The local build artifact lives inside node_modules and can be silently emptied by
+        // a dependency reinstall (`rm -rf node_modules && npm install`); promoting a 0-byte
+        // file yields a crash-looping agent (status=203/EXEC) with no apply-time signal.
+        // Refuse an empty upload *before* clobbering a known-good binary, then verify the
+        // promoted binary actually executes on this host so a bad artifact fails the apply
+        // loudly instead of silently shipping a dead agent.
+        create: sudo(
+          connUser,
+          [
+            'test -s /tmp/opsen-agent || { echo "opsen-agent upload is empty — refusing to install (stale/empty build artifact?)" >&2; exit 1; }',
+            'mv /tmp/opsen-agent /usr/local/bin/opsen-agent',
+            'chmod +x /usr/local/bin/opsen-agent',
+            '/usr/local/bin/opsen-agent --version >/dev/null 2>&1 || { echo "installed opsen-agent failed to execute (--version)" >&2; exit 1; }',
+          ].join('\n'),
+        ),
         triggers: [binHash],
       },
       { parent: this, dependsOn: [binary] },
