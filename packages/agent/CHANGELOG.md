@@ -1,5 +1,23 @@
 # @opsen/agent
 
+## 0.7.1
+
+### Patch Changes
+
+- ea85f14: Fix `AgentInstaller` silently uploading an empty agent binary, leaving a crash-looping agent (`status=203/EXEC`) while `pulumi up` reports success.
+
+  The binary is built locally into `<pkg>/go/out` (inside `node_modules`) and uploaded with `CopyToRemote`. A routine `rm -rf node_modules && npm install` deletes the artifact; the installer then writes a 0-byte placeholder (needed to satisfy `FileAsset`'s registration-time hashing), and if that empty file gets promoted nothing validated it — `chmod +x` and `systemctl start` both "succeed" and the agent dies on `Exec format error`, surfacing only later as `ECONNREFUSED :8443` from a downstream deployer.
+
+  The installer now validates the artifact at two points: the build step asserts the freshly built binary is non-empty (`test -s`) before trusting its hash, and the promotion step refuses to install a 0-byte upload **before** clobbering a known-good binary, then runs `opsen-agent --version` to confirm the promoted binary actually executes on the host. A bad artifact now fails the apply loudly instead of shipping a dead agent.
+
+- 8d96f75: Fix `AgentInstaller` client-policy `MirrorState` failing with `Permission denied` (`status 2`) on non-root SSH targets.
+
+  Every file the installer writes goes through `command.remote.Command` wrapped in `sudo`, except client policies — those are synced by `MirrorState`, which uploads over plain SFTP **as the SSH user with no privilege escalation**. The installer created `/etc/opsen-agent` as root and never prepared `/var/lib/mirror-state`, so on a host reached as a non-root sudo user (e.g. `connection.user = 'deploy'`) the SFTP `mkdir` into the staging dir and the `clients` symlink replacement in the root-owned parent both failed.
+
+  The setup step now mirrors `ComposeProject`'s prep: it creates `/var/lib/mirror-state` and chowns it plus the `/etc/opsen-agent` parent (non-recursively) to the connection user, so `MirrorState`'s unprivileged writes succeed. Files inside `/etc/opsen-agent` (`agent.yaml`, `*.pem`) keep their `opsen-agent` ownership, and the change is a no-op when connecting as root.
+
+  This was latent because `MirrorState` only writes when rendered content changes; it surfaced the first time a client policy's bytes actually changed on a `deploy`-user target.
+
 ## 0.7.0
 
 ### Minor Changes
