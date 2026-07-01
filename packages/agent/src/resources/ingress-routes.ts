@@ -90,7 +90,13 @@ const ingressRoutesProvider: pulumi.dynamic.ResourceProvider = {
 
     const changes = replaces.length > 0 || JSON.stringify(olds.routes) !== JSON.stringify(news.routes)
 
-    return { changes, replaces }
+    // Caddy rejects a config that has two server blocks for the same host. When
+    // a replacement is triggered (app rename, or agent move) the old and new
+    // app's route files would both claim the same host during Pulumi's default
+    // create-before-delete replacement, so the reload of the newly-created app
+    // fails with 500. Force delete-before-create so the old app's routes are
+    // removed before the new app's are written.
+    return { changes, replaces, deleteBeforeReplace: replaces.length > 0 }
   },
 }
 
