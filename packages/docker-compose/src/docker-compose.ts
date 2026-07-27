@@ -55,42 +55,8 @@ export class DockerCompose extends pulumi.ComponentResource {
 
     const { connection, project, preCommands, healthCheck } = args
 
-    // Auto-generated setup commands
-    const setupMirror = new command.remote.Command(
-      `${name}-setup-mirror`,
-      {
-        connection,
-        create: `sudo mkdir -p /var/lib/mirror-state && sudo chown ${connection.user}:${connection.user} /var/lib/mirror-state`,
-      },
-      { parent: this },
-    )
-
-    const setupProject = new command.remote.Command(
-      `${name}-setup-project`,
-      {
-        connection,
-        create: pulumi.interpolate`sudo mkdir -p ${project.remotePath} ${project.remotePath}/compose && sudo chown ${connection.user}:${connection.user} ${project.remotePath} ${project.remotePath}/compose`,
-      },
-      { parent: this, dependsOn: [setupMirror] },
-    )
-
-    // User pre-commands
-    const preCommandResources: command.remote.Command[] = []
-    if (preCommands) {
-      for (let i = 0; i < preCommands.length; i++) {
-        const cmd = new command.remote.Command(
-          `${name}-pre-${i}`,
-          {
-            connection,
-            create: preCommands[i],
-          },
-          { parent: this, dependsOn: i > 0 ? [preCommandResources[i - 1]] : [setupProject] },
-        )
-        preCommandResources.push(cmd)
-      }
-    }
-
-    // Resolve all Outputs and build mirror files
+    // Resolve all Outputs and build mirror files. Computed up here because it
+    // also drives the setup commands' `triggers` below.
     const mirrorFiles = pulumi
       .all([
         project.remotePath,
@@ -120,6 +86,48 @@ export class DockerCompose extends pulumi.ComponentResource {
           Object.keys(resolvedEnv).length > 0 ? resolvedEnv : undefined,
         )
       })
+
+    // Auto-generated setup commands. `triggers: [mirrorFiles]` re-runs the
+    // idempotent mkdir+chown on every file change — i.e. right before the mirror
+    // writes — so ownership drift on the staging/project dirs self-heals. The
+    // MirrorState sync runs as the connection user over SFTP and cannot
+    // chmod/chown, so this is the only place that can repair a root-owned
+    // /var/lib/mirror-state (e.g. left behind by an earlier root-run deploy).
+    const setupMirror = new command.remote.Command(
+      `${name}-setup-mirror`,
+      {
+        connection,
+        create: `sudo mkdir -p /var/lib/mirror-state && sudo chown ${connection.user}:${connection.user} /var/lib/mirror-state`,
+        triggers: [mirrorFiles],
+      },
+      { parent: this },
+    )
+
+    const setupProject = new command.remote.Command(
+      `${name}-setup-project`,
+      {
+        connection,
+        create: pulumi.interpolate`sudo mkdir -p ${project.remotePath} ${project.remotePath}/compose && sudo chown ${connection.user}:${connection.user} ${project.remotePath} ${project.remotePath}/compose`,
+        triggers: [mirrorFiles],
+      },
+      { parent: this, dependsOn: [setupMirror] },
+    )
+
+    // User pre-commands
+    const preCommandResources: command.remote.Command[] = []
+    if (preCommands) {
+      for (let i = 0; i < preCommands.length; i++) {
+        const cmd = new command.remote.Command(
+          `${name}-pre-${i}`,
+          {
+            connection,
+            create: preCommands[i],
+          },
+          { parent: this, dependsOn: i > 0 ? [preCommandResources[i - 1]] : [setupProject] },
+        )
+        preCommandResources.push(cmd)
+      }
+    }
 
     const composePath = pulumi.output(project.remotePath).apply((p) => `${p}/compose`)
 
