@@ -44,6 +44,10 @@ type Route struct {
 	Headers      map[string]string `json:"headers,omitempty"`
 	CORS         *CORSConfig       `json:"cors,omitempty"`
 	RateLimitRps int               `json:"rate_limit_rps,omitempty"`
+	// BackendProtocol selects the protocol used toward the upstream:
+	// "" (unset) and "http" keep the driver default (HTTP/1.1); "h2c" is
+	// HTTP/2 cleartext, required for gRPC backends. Any other value is a 400.
+	BackendProtocol string `json:"backend_protocol,omitempty"`
 }
 
 type RouteTLS struct {
@@ -153,6 +157,13 @@ func (h *Handler) updateRoutesForApp(w http.ResponseWriter, r *http.Request, app
 			"error":      "policy violations",
 			"violations": violations,
 		})
+		return
+	}
+
+	// Driver-specific validation (e.g. Caddy rejects h2c + path_prefix). Runs
+	// before WriteConfig so a rejected request leaves the config file untouched.
+	if err := h.driver.ValidateRoutes(req.Routes); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 

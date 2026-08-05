@@ -2,12 +2,16 @@ import * as pulumi from '@pulumi/pulumi'
 import type { AgentConnectionArgs } from '../types'
 import { type AgentConnection, agentRequest, checkResponse } from './client'
 
+/** Protocol the ingress speaks to the upstream. `h2c` is HTTP/2 cleartext (gRPC). */
+export type IngressBackendProtocol = 'http' | 'h2c'
+
 interface IngressRoute {
   name: string
   domain: string
   path?: string
   upstream: string
   bind?: string
+  backendProtocol?: IngressBackendProtocol
   tls?: {
     acme?: boolean
     cert?: string
@@ -33,7 +37,7 @@ export interface IngressUpdateResult {
 }
 
 /** Transform TypeScript route to Go API format (camelCase → snake_case, domain → hosts). */
-function toApiRoute(route: IngressRoute) {
+export function toApiRoute(route: IngressRoute) {
   return {
     name: route.name,
     hosts: [route.domain],
@@ -43,6 +47,7 @@ function toApiRoute(route: IngressRoute) {
     tls: route.tls,
     headers: route.headers,
     rate_limit_rps: route.rateLimit,
+    backend_protocol: route.backendProtocol,
   }
 }
 
@@ -107,6 +112,17 @@ export interface IngressRouteArgs {
   upstream: pulumi.Input<string>
   /** Bind route to specific IP address (e.g. internal-only routes) */
   bind?: pulumi.Input<string>
+  /**
+   * Protocol the ingress speaks to the upstream. Defaults to `'http'` (HTTP/1.1).
+   * Set to `'h2c'` for gRPC backends so the upstream is reached over HTTP/2
+   * cleartext instead of being downgraded.
+   *
+   * The Caddy driver rejects `'h2c'` combined with a `path` other than `/`
+   * (its `handle_path` strips the prefix, corrupting absolute gRPC method
+   * paths); the Traefik driver accepts the combination because `PathPrefix`
+   * does not strip.
+   */
+  backendProtocol?: pulumi.Input<IngressBackendProtocol>
   tls?: pulumi.Input<{
     acme?: pulumi.Input<boolean>
     cert?: pulumi.Input<string>

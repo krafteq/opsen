@@ -18,6 +18,29 @@ func (d *TraefikDriver) configPath(clientName, app string) string {
 	return filepath.Join(d.configDir, clientName+"--"+app+".yml")
 }
 
+// ValidateRoutes rejects unknown backend_protocol values only.
+//
+// Unlike Caddy, Traefik's PathPrefix matcher does not strip the matched prefix,
+// so h2c combined with a path prefix is legal here.
+func (d *TraefikDriver) ValidateRoutes(routes []Route) error {
+	for _, route := range routes {
+		if err := validateBackendProtocol(route); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// upstreamURL renders a route's upstream as a Traefik loadBalancer server URL.
+// Traefik selects HTTP/2 cleartext to the backend from the h2c:// scheme, the
+// same form Caddy takes.
+func (d *TraefikDriver) upstreamURL(route Route) string {
+	if isH2C(route) {
+		return "h2c://" + route.Upstream
+	}
+	return "http://" + route.Upstream
+}
+
 func (d *TraefikDriver) WriteConfig(clientName string, app string, routes []Route) error {
 	cfg := d.buildConfig(clientName, app, routes)
 
@@ -213,7 +236,7 @@ func (d *TraefikDriver) buildConfig(clientName string, app string, routes []Rout
 		services[serviceName] = map[string]any{
 			"loadBalancer": map[string]any{
 				"servers": []map[string]string{
-					{"url": "http://" + route.Upstream},
+					{"url": d.upstreamURL(route)},
 				},
 			},
 		}
