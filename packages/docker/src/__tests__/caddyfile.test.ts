@@ -101,4 +101,46 @@ describe('generateCaddyfile', () => {
     const result = generateCaddyfile([])
     expect(result).toBe('')
   })
+
+  describe('backendProtocol', () => {
+    // The two inputs below differ only in `backendProtocol`.
+    const base: IngressTarget = {
+      endpointName: 'grpc',
+      containerName: 'app',
+      containerPort: 8080,
+      hosts: ['app.example.com'],
+      path: '/',
+      enableCors: false,
+    }
+
+    it('emits a bare upstream when the field is absent', () => {
+      expect(reverseProxyLines(generateCaddyfile([base]))).toEqual(['  reverse_proxy app:8080'])
+    })
+
+    it("emits an h2c:// upstream when the field is 'h2c'", () => {
+      const h2c: IngressTarget = { ...base, backendProtocol: 'h2c' }
+      expect(reverseProxyLines(generateCaddyfile([h2c]))).toEqual(['  reverse_proxy h2c://app:8080'])
+    })
+
+    it("treats an explicit 'http' as byte-identical to the default", () => {
+      const explicit: IngressTarget = { ...base, backendProtocol: 'http' }
+      expect(generateCaddyfile([explicit])).toBe(generateCaddyfile([base]))
+    })
+
+    it('throws when h2c is combined with a path prefix, naming the endpoint', () => {
+      const h2cWithPath: IngressTarget = { ...base, backendProtocol: 'h2c', path: '/api' }
+      expect(() => generateCaddyfile([h2cWithPath])).toThrow(/grpc/)
+      expect(() => generateCaddyfile([h2cWithPath])).toThrow(/h2c/)
+    })
+
+    it('allows h2c on a root path', () => {
+      const rootPath: IngressTarget = { ...base, backendProtocol: 'h2c', path: '/' }
+      expect(reverseProxyLines(generateCaddyfile([rootPath]))).toEqual(['  reverse_proxy h2c://app:8080'])
+    })
+  })
 })
+
+/** Every `reverse_proxy` line of a Caddyfile, indentation included. */
+function reverseProxyLines(caddyfile: string): string[] {
+  return caddyfile.split('\n').filter((line) => line.trim().startsWith('reverse_proxy'))
+}

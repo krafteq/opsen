@@ -29,6 +29,12 @@ export interface IngressTarget {
   hosts: string[]
   path: string
   enableCors: boolean
+  /**
+   * Protocol the ingress speaks to the backend. Absent or `'http'` keeps
+   * Caddy's default upstream transport (HTTP/1.1); `'h2c'` emits an
+   * `h2c://` upstream so gRPC backends are reachable over HTTP/2 cleartext.
+   */
+  backendProtocol?: 'http' | 'h2c'
 }
 
 export class DockerWorkloadDeployer {
@@ -76,6 +82,7 @@ export class DockerWorkloadDeployer {
             hosts: endpoint.ingress.hosts as string[],
             path: (endpoint.ingress.path as string) ?? '/',
             enableCors: (endpoint.ingress.enableCors as boolean) ?? false,
+            backendProtocol: endpoint.ingress._docker?.backendProtocol,
           })
         } else {
           const servicePort = endpoint.servicePort ?? backendPort.port

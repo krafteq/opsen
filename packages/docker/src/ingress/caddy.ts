@@ -66,7 +66,11 @@ export class CaddyIngressDeployer {
     return pulumi.output(container)
   }
 
-  private generateCaddyfile(targets: IngressTarget[]): string {
+  /**
+   * Generate the Caddyfile for the given targets. Exposed (rather than private)
+   * so the emitted configuration can be asserted without deploying containers.
+   */
+  generateCaddyfile(targets: IngressTarget[]): string {
     const lines: string[] = []
 
     // Global options
@@ -91,7 +95,7 @@ export class CaddyIngressDeployer {
       lines.push(`${host} {`)
       for (const target of hostTargets) {
         const path = target.path === '/' ? '' : target.path
-        const upstream = `${target.containerName}:${target.containerPort}`
+        const upstream = `${upstreamScheme(target, path)}${target.containerName}:${target.containerPort}`
 
         if (target.enableCors) {
           lines.push(`  @cors${sanitize(target.endpointName)} {`)
@@ -119,6 +123,27 @@ export class CaddyIngressDeployer {
 
     return lines.join('\n')
   }
+}
+
+/**
+ * Scheme prefix for a target's upstream reference. Empty for the default
+ * (HTTP/1.1) transport so existing output is unchanged; `h2c://` when the
+ * target opts into HTTP/2 cleartext.
+ *
+ * `path` is the already-normalised prefix ('' when the route is `/`). An
+ * h2c route may not carry one: `handle_path` strips the matched prefix and
+ * gRPC method paths are absolute, so stripping mangles them.
+ */
+function upstreamScheme(target: IngressTarget, path: string): string {
+  if (target.backendProtocol !== 'h2c') return ''
+  if (path) {
+    throw new Error(
+      `Ingress endpoint "${target.endpointName}": backendProtocol 'h2c' cannot be combined with path '${target.path}'. ` +
+        `Caddy strips the matched prefix via handle_path, which corrupts absolute gRPC method paths. ` +
+        `Serve the gRPC endpoint on its own host with path '/' instead.`,
+    )
+  }
+  return 'h2c://'
 }
 
 function sanitize(name: string): string {

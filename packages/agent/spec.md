@@ -175,11 +175,30 @@ Manages reverse proxy configuration files (Traefik or Caddy) via a driver abstra
         "origins": ["https://app.example.com"],
         "methods": ["GET", "POST"]
       },
-      "rate_limit_rps": 100
+      "rate_limit_rps": 100,
+      "backend_protocol": "h2c"
     }
   ]
 }
 ```
+
+#### Backend Protocol
+
+`backend_protocol` selects the protocol the proxy speaks toward the upstream:
+
+| Value             | Emitted upstream                                                 |
+| ----------------- | ---------------------------------------------------------------- |
+| absent / `"http"` | Caddy `reverse_proxy host:port`, Traefik `http://host:port`      |
+| `"h2c"`           | Caddy `reverse_proxy h2c://host:port`, Traefik `h2c://host:port` |
+
+`h2c` is HTTP/2 cleartext, required for gRPC backends — without it the proxy
+downgrades the backend leg to HTTP/1.1 and gRPC calls cannot be served. Any
+other value is rejected with `400`.
+
+The Caddy driver additionally rejects `h2c` combined with a `path_prefix` other
+than `/`: it emits `handle_path`, which strips the matched prefix, and gRPC
+method paths are absolute (`/package.Service/Method`). Traefik's `PathPrefix`
+matcher does not strip, so the combination is accepted there.
 
 #### Route Processing Pipeline
 
@@ -189,12 +208,15 @@ Manages reverse proxy configuration files (Traefik or Caddy) via a driver abstra
    - Upstream allow/deny matching (supports CIDR, port ranges)
    - Rate limit max check
    - Route count limit
-2. Inject platform defaults
+2. Validate routes against driver constraints (400 on failure, nothing written)
+   - backend_protocol is one of "", "http", "h2c"
+   - Caddy only: h2c is not combined with a path prefix
+3. Inject platform defaults
    - Default rate limit if policy defines one
    - Security headers (HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
-3. Generate config via driver (Traefik YAML or Caddyfile)
-4. Write config to disk
-5. Reload (Traefik: no-op file watch; Caddy: configurable reload command)
+4. Generate config via driver (Traefik YAML or Caddyfile)
+5. Write config to disk
+6. Reload (Traefik: no-op file watch; Caddy: configurable reload command)
 ```
 
 #### Drivers
