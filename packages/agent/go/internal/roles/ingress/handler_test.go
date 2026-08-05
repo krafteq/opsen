@@ -621,6 +621,180 @@ func TestCountAllRoutes_IncludesLegacyFile(t *testing.T) {
 	}
 }
 
+// ── Upstream policy ─────────────────────────────────────
+
+// upstreamClient builds a client whose only ingress constraint is the upstream
+// policy under test. testClient() deliberately carries an empty UpstreamPolicy,
+// so these cases need their own.
+func upstreamClient(allowed, denied []string) *config.ClientPolicy {
+	return &config.ClientPolicy{
+		Client: "acme",
+		Ingress: &config.IngressPolicy{
+			MaxRoutes: 10,
+			Domains:   config.DomainPolicy{Allowed: []string{"*.example.com"}},
+			Upstreams: config.UpstreamPolicy{AllowedTargets: allowed, DenyTargets: denied},
+		},
+	}
+}
+
+func putRoute(t *testing.T, mux *http.ServeMux, client *config.ClientPolicy, upstream string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doMuxRequest(mux, "PUT", "/v1/ingress/apps/web/routes", RouteRequest{
+		Routes: []Route{{Name: "r", Hosts: []string{"app.example.com"}, Upstream: upstream}},
+	}, client)
+}
+
+func assertPolicyViolation(t *testing.T, rr *httptest.ResponseRecorder, wantSubstring string) {
+	t.Helper()
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := parseResponse(t, rr)
+	if resp["error"] != "policy violations" {
+		t.Fatalf("expected 'policy violations', got %v", resp["error"])
+	}
+	if !contains(rr.Body.String(), wantSubstring) {
+		t.Errorf("expected violation mentioning %q, got %s", wantSubstring, rr.Body.String())
+	}
+}
+
+// TestUpstreamPolicy_MalformedRejected is the regression for the fail-open deny
+// list. A malformed upstream used to skip the deny branch entirely while the
+// Caddy driver still wrote it into the config as a working route — so it is
+// rejected outright now, under a deny-only policy as well as an allow-list one.
+func TestUpstreamPolicy_MalformedRejected(t *testing.T) {
+	malformed := []string{
+		"http://10.0.0.5:8080",
+		"h2c://10.0.0.5:8080",
+		"10.0.0.5:8080/",
+		"10.0.0.5:8080/admin",
+		"10.0.0.5",
+		"10.0.0.5:http",
+	}
+
+	policies := map[string]*config.ClientPolicy{
+		"deny-only":  upstreamClient(nil, []string{"10.0.0.5:*"}),
+		"allow-list": upstreamClient([]string{"10.0.0.0/8:*"}, nil),
+		"no lists":   upstreamClient(nil, nil),
+	}
+
+	for name, client := range policies {
+		for _, upstream := range malformed {
+			h, configDir := testHandler(t)
+			mux := setupMux(h)
+
+			rr := putRoute(t, mux, client, upstream)
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("%s / upstream %q: expected 400, got %d: %s", name, upstream, rr.Code, rr.Body.String())
+				continue
+			}
+			assertPolicyViolation(t, rr, "invalid upstream")
+
+			// A rejected request must not have written any config.
+			if _, err := os.Stat(filepath.Join(configDir, "acme--web.conf")); !os.IsNotExist(err) {
+				t.Errorf("%s / upstream %q: rejected route should not write a config file", name, upstream)
+			}
+		}
+	}
+}
+
+func TestUpstreamPolicy_DenyList(t *testing.T) {
+	tests := []struct {
+		name     string
+		denied   []string
+		upstream string
+		wantDeny bool
+	}{
+		{"exact target denied", []string{"10.0.0.5:8080"}, "10.0.0.5:8080", true},
+		{"exact target other port allowed", []string{"10.0.0.5:8080"}, "10.0.0.5:8081", false},
+		{"port wildcard denied", []string{"10.0.0.5:*"}, "10.0.0.5:9999", true},
+		// Defect B: a portless deny pattern used to match nothing at all.
+		{"portless host denied", []string{"10.0.0.5"}, "10.0.0.5:8080", true},
+		{"portless cidr denied", []string{"10.0.0.0/8"}, "10.0.0.5:8080", true},
+		{"portless cidr outside allowed", []string{"10.0.0.0/8"}, "192.168.0.5:8080", false},
+		{"port range denied", []string{"10.0.0.5:8000-8999"}, "10.0.0.5:8080", true},
+		{"port range outside allowed", []string{"10.0.0.5:8000-8999"}, "10.0.0.5:9000", false},
+	}
+
+	for _, tt := range tests {
+		h, _ := testHandler(t)
+		mux := setupMux(h)
+
+		rr := putRoute(t, mux, upstreamClient(nil, tt.denied), tt.upstream)
+		if tt.wantDeny {
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("%s: expected 400, got %d: %s", tt.name, rr.Code, rr.Body.String())
+				continue
+			}
+			assertPolicyViolation(t, rr, "is denied")
+		} else if rr.Code != http.StatusOK {
+			t.Errorf("%s: expected 200, got %d: %s", tt.name, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestUpstreamPolicy_AllowList(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowed   []string
+		upstream  string
+		wantAllow bool
+	}{
+		{"inside cidr", []string{"10.0.0.0/24:*"}, "10.0.0.7:8080", true},
+		{"outside cidr", []string{"10.0.0.0/24:*"}, "10.0.1.7:8080", false},
+		{"inside port range", []string{"10.0.0.5:3000-3099"}, "10.0.0.5:3050", true},
+		{"outside port range", []string{"10.0.0.5:3000-3099"}, "10.0.0.5:4000", false},
+		{"portless host pattern", []string{"10.0.0.5"}, "10.0.0.5:65535", true},
+	}
+
+	for _, tt := range tests {
+		h, _ := testHandler(t)
+		mux := setupMux(h)
+
+		rr := putRoute(t, mux, upstreamClient(tt.allowed, nil), tt.upstream)
+		if tt.wantAllow {
+			if rr.Code != http.StatusOK {
+				t.Errorf("%s: expected 200, got %d: %s", tt.name, rr.Code, rr.Body.String())
+			}
+			continue
+		}
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d: %s", tt.name, rr.Code, rr.Body.String())
+			continue
+		}
+		assertPolicyViolation(t, rr, "not in allowed targets")
+	}
+}
+
+// TestUpstreamPolicy_DenyWinsOverAllow keeps the two branches independent: a
+// target inside the allow list is still rejected when the deny list names it.
+func TestUpstreamPolicy_DenyWinsOverAllow(t *testing.T) {
+	h, _ := testHandler(t)
+	mux := setupMux(h)
+	client := upstreamClient([]string{"10.0.0.0/8:*"}, []string{"10.0.0.1"})
+
+	rr := putRoute(t, mux, client, "10.0.0.1:8080")
+	assertPolicyViolation(t, rr, "is denied")
+
+	if rr := putRoute(t, mux, client, "10.0.0.2:8080"); rr.Code != http.StatusOK {
+		t.Errorf("allowed-and-not-denied target: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestUpstreamPolicy_IPv6 covers the bracketed target / bracketed CIDR pattern
+// spelling end to end.
+func TestUpstreamPolicy_IPv6(t *testing.T) {
+	h, _ := testHandler(t)
+	mux := setupMux(h)
+
+	rr := putRoute(t, mux, upstreamClient(nil, []string{"[fd00::/8]:*"}), "[fd00::1]:8080")
+	assertPolicyViolation(t, rr, "is denied")
+
+	if rr := putRoute(t, mux, upstreamClient(nil, []string{"[fd00::/8]:*"}), "[fe80::1]:8080"); rr.Code != http.StatusOK {
+		t.Errorf("target outside the denied prefix: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func contains(s, substr string) bool {
 	return bytes.Contains([]byte(s), []byte(substr))
 }

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/opsen/agent/internal/policy"
 )
 
 type ClientPolicy struct {
@@ -265,5 +267,32 @@ func loadClientPolicy(path string) (*ClientPolicy, error) {
 		return nil, fmt.Errorf("client name is required in %s", path)
 	}
 
+	if err := validateIngressPolicy(policy.Ingress); err != nil {
+		return nil, fmt.Errorf("invalid client policy in %s: %w", path, err)
+	}
+
 	return policy, nil
+}
+
+// validateIngressPolicy rejects upstream patterns that could never match. Such a
+// pattern is a silent no-op at request time — on the deny list that means a
+// control the operator believes is active does not exist — so it fails the file
+// at load instead. The caller drops the client, and an unknown client is refused
+// at the mTLS boundary, so the failure is closed.
+func validateIngressPolicy(pol *IngressPolicy) error {
+	if pol == nil {
+		return nil
+	}
+
+	for _, pattern := range pol.Upstreams.AllowedTargets {
+		if err := policy.ValidateUpstreamPattern(pattern); err != nil {
+			return fmt.Errorf("ingress.upstreams.allowed_targets: %w", err)
+		}
+	}
+	for _, pattern := range pol.Upstreams.DenyTargets {
+		if err := policy.ValidateUpstreamPattern(pattern); err != nil {
+			return fmt.Errorf("ingress.upstreams.deny_targets: %w", err)
+		}
+	}
+	return nil
 }

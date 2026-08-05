@@ -182,6 +182,18 @@ Manages reverse proxy configuration files (Traefik or Caddy) via a driver abstra
 }
 ```
 
+#### Upstream
+
+`upstream` must be a bare `host:port` — `10.0.0.5:3000`, `db.internal:5432`,
+`[fd00::1]:8080`. It carries no scheme and no path: the drivers write it into
+the generated proxy config verbatim, and the scheme, when one is needed, comes
+from `backend_protocol` instead.
+
+Anything else — `http://10.0.0.5:3000`, `10.0.0.5:3000/api`, a bare host with no
+port, a port outside `1-65535` — is rejected with `400` and a policy violation
+naming the route. The agent does not guess: an upstream it cannot parse is one
+it cannot check against `allowed_targets` or `deny_targets` either.
+
 #### Backend Protocol
 
 `backend_protocol` selects the protocol the proxy speaks toward the upstream:
@@ -205,7 +217,8 @@ matcher does not strip, so the combination is accepted there.
 ```text
 1. Validate routes against client ingress policy
    - Domain allow/deny matching (specificity-based, deny wins on tie)
-   - Upstream allow/deny matching (supports CIDR, port ranges)
+   - Upstream parses as host:port (rejected outright if not — never guessed)
+   - Upstream allow/deny matching (supports CIDR, port ranges, portless patterns)
    - Rate limit max check
    - Route count limit
 2. Validate routes against driver constraints (400 on failure, nothing written)
@@ -561,7 +574,7 @@ ingress:
 
   upstreams:
     allowed_targets: ['10.0.0.5:3000-3099', '10.0.0.0/24:*']
-    deny_targets: ['10.0.0.1:*']
+    deny_targets: ['10.0.0.1:*', '169.254.169.254']
 
   headers:
     force_hsts: true
@@ -577,6 +590,32 @@ ingress:
     allowed: []
     denied: []
 ```
+
+#### Upstream Target Patterns
+
+`allowed_targets` and `deny_targets` are lists of `host[:port]` patterns:
+
+| Pattern form  | Example              | Matches                                   |
+| ------------- | -------------------- | ----------------------------------------- |
+| Exact         | `10.0.0.5:3000`      | That host on that port                    |
+| Port range    | `10.0.0.5:3000-3099` | That host on any port in the range        |
+| Port wildcard | `10.0.0.5:*`         | That host on any port                     |
+| CIDR          | `10.0.0.0/24:*`      | Any address in the block, on any port     |
+| Host wildcard | `*:8080`             | Any host on that port                     |
+| Portless host | `10.0.0.5`           | That host on **any** port                 |
+| Portless CIDR | `10.0.0.0/8`         | Any address in the block, on **any** port |
+
+A pattern with no port half matches any port — `10.0.0.0/8` and `10.0.0.0/8:*`
+are equivalent. IPv6 patterns work bracketed or bare when portless
+(`[fd00::/8]:*`, `[fd00::/8]`, `fd00::/8`); a bare IPv6 pattern **with** a port
+half (`fd00::/8:*`) is ambiguous and rejected — bracket it.
+
+Patterns are validated when the client policy file is loaded. A pattern that
+could never match — a malformed CIDR, a non-numeric or inverted port range, a
+missing host — fails the file rather than loading as an inert entry, and a
+client whose policy fails to load is refused at the mTLS boundary. This matters
+most on `deny_targets`, where a silently unmatchable pattern is a control the
+operator believes is active but that does not exist.
 
 ### Per-Client Database Policy
 

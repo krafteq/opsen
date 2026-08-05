@@ -228,12 +228,7 @@ func (h *Handler) validateRoutes(routes []Route, pol *config.IngressPolicy, clie
 
 		// Upstream validation
 		if route.Upstream != "" {
-			if len(pol.Upstreams.AllowedTargets) > 0 && !policy.MatchUpstream(route.Upstream, pol.Upstreams.AllowedTargets) {
-				violations = append(violations, fmt.Sprintf("route %s: upstream '%s' not in allowed targets", route.Name, route.Upstream))
-			}
-			if policy.MatchUpstream(route.Upstream, pol.Upstreams.DenyTargets) {
-				violations = append(violations, fmt.Sprintf("route %s: upstream '%s' is denied", route.Name, route.Upstream))
-			}
+			violations = append(violations, validateUpstream(route, pol.Upstreams)...)
 		}
 
 		// Rate limit validation
@@ -242,6 +237,30 @@ func (h *Handler) validateRoutes(routes []Route, pol *config.IngressPolicy, clie
 		}
 	}
 
+	return violations
+}
+
+// validateUpstream checks one route's upstream against the allow and deny lists.
+//
+// A target that does not parse as host:port is rejected outright rather than
+// handed to either list. Neither list can say anything meaningful about a target
+// the matcher could not read, and folding "unparseable" into "no match" makes
+// the deny branch fail open: the drivers write Route.Upstream into the proxy
+// config verbatim, so "h2c://10.0.0.5:8080" or "10.0.0.5:8080/" would be a
+// working route that never reached the deny list.
+func validateUpstream(route Route, pol config.UpstreamPolicy) []string {
+	host, port, err := policy.ParseUpstream(route.Upstream)
+	if err != nil {
+		return []string{fmt.Sprintf("route %s: invalid upstream: %v", route.Name, err)}
+	}
+
+	var violations []string
+	if len(pol.AllowedTargets) > 0 && !policy.MatchUpstreamHostPort(host, port, pol.AllowedTargets) {
+		violations = append(violations, fmt.Sprintf("route %s: upstream '%s' not in allowed targets", route.Name, route.Upstream))
+	}
+	if policy.MatchUpstreamHostPort(host, port, pol.DenyTargets) {
+		violations = append(violations, fmt.Sprintf("route %s: upstream '%s' is denied", route.Name, route.Upstream))
+	}
 	return violations
 }
 
