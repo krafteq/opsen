@@ -109,6 +109,14 @@ export interface IngressRouteArgs {
   name: pulumi.Input<string>
   domain: pulumi.Input<string>
   path?: pulumi.Input<string>
+  /**
+   * Target the ingress proxies to, as a bare `host:port` — `app:8080`,
+   * `10.0.0.5:3000`, `[fd00::1]:8080`. No scheme and no path: the agent writes
+   * it into the generated proxy config verbatim, and the scheme comes from
+   * {@link IngressRouteArgs.backendProtocol}. Anything else is rejected by the
+   * agent's upstream policy with a `400`, because a target it cannot parse is
+   * one it cannot check against the client's allowed/denied targets either.
+   */
   upstream: pulumi.Input<string>
   /** Bind route to specific IP address (e.g. internal-only routes) */
   bind?: pulumi.Input<string>
