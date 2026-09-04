@@ -111,9 +111,18 @@ func (r *Reconciler) redeployProject(clientName string, client *config.ClientPol
 		r.logger.Error("reconcile: failed to serialize compose file", "client", clientName, "project", projectSlug, "error", err)
 		return
 	}
-	if err := os.WriteFile(composePath, transformed, 0640); err != nil {
+	if err := writeProjectFile(composePath, transformed, composeFileMode); err != nil {
 		r.logger.Error("reconcile: failed to write compose file", "client", clientName, "project", projectSlug, "error", err)
 		return
+	}
+
+	// Re-apply the project file mode contract to everything already on disk, so
+	// projects deployed by an agent version that wrote bind-mounted files
+	// agent-private (0640 in 0750 directories) self-heal on this policy-hash
+	// driven redeploy without a client-side redeploy. Best-effort: an entry the
+	// non-root agent cannot chmod is logged, not fatal.
+	if err := applyProjectFileModes(projectDir); err != nil {
+		r.logger.Warn("reconcile: could not fully apply project file modes", "client", clientName, "project", projectSlug, "error", err)
 	}
 
 	// Run docker compose up
@@ -148,6 +157,11 @@ func policyHash(client *config.ClientPolicy, cfg *config.AgentConfig) string {
 	// projects so they migrate from the legacy shared `opsen-{client}-internal` network onto
 	// per-project `opsen-{client}-{project}-internal` networks.
 	fmt.Fprintf(h, "netmodel=v2\n")
+
+	// Bumped when the project file mode contract (files.go) changes — forces a
+	// redeploy of all existing projects so files written agent-private by earlier
+	// agent versions are re-opened for the hardened non-root service user.
+	fmt.Fprintf(h, "filemodes=v1\n")
 
 	// Client compose policy fields
 	if client.Compose != nil {

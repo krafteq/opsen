@@ -104,7 +104,7 @@ The `files` field is a map of `relative path -> content`. The agent looks for a 
 5. Calculate resource usage (containers, memory, CPU)
 6. Check cross-project resource budget via ResourceTracker
 7. Apply hardening (security_opt, cap_drop, read_only, tmpfs, pids_limit, user, logging, network isolation, named-volume ownership init sidecars)
-8. Write ALL files to project directory (sanitized paths, no path traversal)
+8. Write ALL files to project directory (sanitized paths, no path traversal, fixed owner/mode contract — see File Path Security)
 9. Write hardened compose file (replaces original)
 10. Run: docker compose -p opsen-{client}-{project} -f {path} up -d --remove-orphans
 11. Update ResourceTracker with new resource usage
@@ -143,9 +143,85 @@ All projects are namespaced: `opsen-{client}-{project}`. This prevents collision
 
 #### File Path Security
 
-- Paths are cleaned via `filepath.Clean()`
-- Paths starting with `..` or absolute paths are rejected
+- The project name (the `{project}` URL segment) must match `[A-Za-z0-9][A-Za-z0-9_-]*`. It becomes a
+  directory name under the client directory, and the router hands percent-encoded separators
+  (`%2e%2e`, `..%2f..`) over unescaped, so anything else is rejected before it can reach a path.
+- File paths are cleaned via `filepath.Clean()`
+- File paths starting with `..` or absolute paths are rejected
 - Subdirectories are created as needed (e.g., `config/nginx.conf` creates `config/`)
+- Bind-mount sources are resolved and confined before anything is written — see
+  [Bind-Mount Source Confinement](#bind-mount-source-confinement)
+
+##### Project File Ownership and Modes
+
+The agent runs as the non-root `opsen-agent` system user (see [Systemd Integration](#systemd-integration)),
+so every project file is owned by `opsen-agent:opsen-agent` and the agent cannot `chown` it to the
+service user. A hardened service runs as an unrelated non-root uid (`default_user`, e.g. `1000:1000`)
+with `cap_drop: ALL` — no `CAP_DAC_OVERRIDE` — so the only thing that lets a container read a
+project file bind-mounted into it (`./files/<process>/<path>:<path>:ro`, the shape app-platform emits
+for a `MappedFile`) is the file's "other" permission bits. The agent therefore writes the project tree
+under this fixed mode contract:
+
+| Path                                                       | Mode   | Rationale                                                                                                                                                           |
+| ---------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deployments/{client}/`, `deployments/{client}/{project}/` | `0750` | Agent-private. Docker resolves bind-mount sources as root, so these ancestors never affect a container, but they keep other host-local users out of the whole tree. |
+| `{project}/compose.yml` (hardened compose file)            | `0640` | Never bind-mounted; carries resolved `environment:` values (secrets).                                                                                               |
+| Every directory below `{project}/`                         | `0755` | May itself be a bind-mount source (`./files/web/etc:/etc/app:ro`); the container needs search permission on it.                                                     |
+| Every other file below `{project}/`                        | `0644` | May be bind-mounted read-only into a container running as an arbitrary uid.                                                                                         |
+
+Every write pins its mode with an explicit `chmod`: a bare `WriteFile` keeps a pre-existing file's
+mode, `MkdirAll` never changes an existing directory's mode, and both apply the process umask to new
+entries — so without the `chmod`, projects deployed by an older agent would stay unreadable forever.
+Consequences:
+
+- A bind-mount source must be a file or directory **below** the project directory (e.g. `./files/...`);
+  the project directory `.` itself stays `0750` and is rejected as a source.
+- Every non-compose project file is world-readable _within the tree_. The `0750` per-client and
+  per-project directories keep other **host-local users** out — but not other **containers**: Docker
+  resolves bind-mount sources as root, so a container that obtained a bind mount of another project's
+  `files/` would read them. What prevents that is that no deploy can obtain such a mount: every
+  bind-mount source is resolved and confined to the deploying project's own directory or to
+  operator-allowed host paths, see [Bind-Mount Source Confinement](#bind-mount-source-confinement).
+- Existing projects are repaired in place: a redeploy rewrites every file under the contract, and the
+  reconciler re-applies it to the whole project tree on its next policy-hash-driven redeploy. Symlinks
+  are skipped there, so a link planted by a container through a writable bind mount cannot redirect the
+  `chmod` outside the tree.
+- This is unrelated to the named-volume ownership init sidecar (see
+  [Global Hardening Injection](#global-hardening-injection)), which fixes Docker-managed **named
+  volumes**; bind-mounted project files need no sidecar because they are readable by mode.
+
+##### Bind-Mount Source Confinement
+
+Every bind-mount source in a deploy request is resolved the way Compose will resolve it when the
+project is brought up from its project directory — an absolute path is cleaned, a relative path is
+joined onto `deployments/{client}/{project}/` — and the **resolved** path is then checked, in this
+order:
+
+1. **Inside the deploying project's own directory** → allowed, provided the mount is read-only (`:ro`).
+   This is the `MappedFile` mechanism (`./files/<process>/<path>`); the tree is agent-written under the
+   mode contract above and is not subject to `host_paths` / `allowed_host_paths`. Read-only is what
+   keeps a lexical check sound: a container that could write into the tree could plant a symlink for a
+   later deploy to mount through. Writable state belongs in a named volume (see the ownership init
+   sidecar). The project directory itself (`.`) is rejected — it is `0750` and unreadable by the
+   service anyway.
+2. **`deny.host_paths`** (global) → rejected. Entries match on path boundaries (`/etc` covers
+   `/etc/passwd`, not `/etcetera`); a denied `/` matches only the root itself.
+3. **Overlapping the agent deployments directory** — another project's tree (same client or not), the
+   deployments directory itself or any ancestor of it, the agent's state files — → rejected regardless
+   of policy, including an `allowed_host_paths` entry that would cover it.
+4. **`allowed_host_paths`** (client policy, when set) → the resolved path must be an entry or below
+   one, matched on path boundaries like the deny list.
+
+Sources the agent cannot resolve are rejected outright: `~` is expanded by Compose from the agent's
+own home directory, and `$VAR` / `${VAR}` is interpolated by Compose — from the agent's environment
+and from the project's `.env` file, which the client writes — after validation has already run. The
+same rules apply to a top-level volume whose `driver_opts` make it a bind mount (`type: none` /
+`o: bind` / `device: <path>`, the `local` driver's bind form), which would otherwise reach the host
+through a volume _name_ the per-service checks treat as Docker-managed. Long-syntax volume entries
+(`type: bind, source: …`) are not accepted by the parser at all.
+
+Confinement is lexical (no symlink resolution) and runs at deploy time; the reconciler re-hardens and
+restarts the compose file that passed it.
 
 ### Ingress Role
 
@@ -436,13 +512,13 @@ Returns `{"status":"ok"}`. No mTLS client certificate required.
 
 Applied to all clients, configured in `agent.yaml`:
 
-| Rule            | Default                                                          | Effect                                     |
-| --------------- | ---------------------------------------------------------------- | ------------------------------------------ |
-| `privileged`    | `true` (deny)                                                    | Blocks `privileged: true` on any container |
-| `network_modes` | `["host"]`                                                       | Blocks `network_mode: host`                |
-| `pid_mode`      | `"host"`                                                         | Blocks `pid: host`                         |
-| `ipc_mode`      | `"host"`                                                         | Blocks `ipc: host`                         |
-| `host_paths`    | `["/", "/etc", "/var/run/docker.sock", "/proc", "/sys", "/dev"]` | Blocks bind mounts to sensitive host paths |
+| Rule            | Default                                                          | Effect                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `privileged`    | `true` (deny)                                                    | Blocks `privileged: true` on any container                                                                                                           |
+| `network_modes` | `["host"]`                                                       | Blocks `network_mode: host`                                                                                                                          |
+| `pid_mode`      | `"host"`                                                         | Blocks `pid: host`                                                                                                                                   |
+| `ipc_mode`      | `"host"`                                                         | Blocks `ipc: host`                                                                                                                                   |
+| `host_paths`    | `["/", "/etc", "/var/run/docker.sock", "/proc", "/sys", "/dev"]` | Blocks bind mounts to sensitive host paths; matched against the resolved source, see [Bind-Mount Source Confinement](#bind-mount-source-confinement) |
 
 `userns_mode: host` is always denied (hardcoded).
 
@@ -486,9 +562,10 @@ root plus the narrow ownership-fixup capabilities therefore live only in a short
 never in the always-on service. `CHOWN` permits the ownership change; `DAC_READ_SEARCH` lets the
 recursive walk traverse restrictive directories left by earlier root/elevated runs. The sidecar
 is built **after** the per-service hardening pass, so the global `cap_drop: ALL` / capability
-allow-list and the read-only rootfs do not apply to it. Bind mounts (host-owned), anonymous
-volumes (not shareable with a separate service), and read-only mounts are skipped; services with
-a name-based (non-numeric) `user:` are also skipped since their uid can't be resolved from a
+allow-list and the read-only rootfs do not apply to it. Bind mounts (host-owned — project files are
+made readable by mode instead, see [Project File Ownership and Modes](#project-file-ownership-and-modes)),
+anonymous volumes (not shareable with a separate service), and read-only mounts are skipped; services
+with a name-based (non-numeric) `user:` are also skipped since their uid can't be resolved from a
 generic init image. Re-hardening is idempotent — existing sidecars and their `depends_on` edges
 are regenerated, never stacked.
 
@@ -540,7 +617,8 @@ compose:
     ingress_port_range: '8000-8999'
     ingress_bind_address: '0.0.0.0'
 
-  # Volume policy
+  # Volume policy — applies to resolved bind-mount sources outside the project directory;
+  # `./files/...` (MappedFile) mounts need no entry, other projects' trees are always rejected
   volumes:
     allowed_host_paths: ['/data/myproject']
     max_volume_count: 5
@@ -1078,10 +1156,10 @@ TypeScript config objects (camelCase) are serialized to YAML (snake_case) for th
 /var/lib/opsen-agent/
 ├── deployments/
 │   ├── resource-state.json          # Cross-project compose resource tracker
-│   └── {client}/
-│       └── {project}/
-│           ├── compose.yml          # Hardened compose file
-│           └── ...                  # Other project files
+│   └── {client}/                    # 0750 opsen-agent:opsen-agent
+│       └── {project}/               # 0750
+│           ├── compose.yml          # Hardened compose file (0640, never bind-mounted)
+│           └── files/...            # Other project files (dirs 0755, files 0644 — bind-mountable)
 └── db/
     └── db-state.json                # Database resource tracker
 /var/log/opsen-agent/
@@ -1091,23 +1169,23 @@ TypeScript config objects (camelCase) are serialized to YAML (snake_case) for th
 
 ## Security Model Summary
 
-| Layer                | Mechanism                                                              |
-| -------------------- | ---------------------------------------------------------------------- |
-| Transport            | mTLS with platform CA, TLS 1.3 minimum                                 |
-| Authentication       | Client certificate CN maps to policy                                   |
-| Authorization        | Per-client role enablement (compose/ingress/db)                        |
-| Compose validation   | Deny-list (privileged, host network, host paths, etc.)                 |
-| Compose hardening    | Automatic injection (no-new-privileges, cap_drop ALL, read_only, etc.) |
-| Network isolation    | Docker `--internal` networks per project (no internet by default)      |
-| Resource limits      | Cross-project budget tracking (containers, memory, CPU)                |
-| Ingress validation   | Domain allow/deny, upstream allow/deny, rate limit caps                |
-| DB isolation         | Separate database per project, REVOKE CONNECT FROM PUBLIC              |
-| DB resource limits   | Connection limits, GUC parameters, disk quota monitoring               |
-| DB credential policy | Password complexity, username deny lists, SCRAM-SHA-256                |
-| DB SQL safety        | Identifier quoting, parameterized queries, GUC allowlist               |
-| Agent process        | systemd hardening (ProtectSystem=strict, no capabilities, PrivateTmp)  |
-| File paths           | Sanitized, no path traversal, restricted host paths                    |
-| Logging              | Forced json-file driver with size limits on all containers             |
+| Layer                | Mechanism                                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Transport            | mTLS with platform CA, TLS 1.3 minimum                                                                                                           |
+| Authentication       | Client certificate CN maps to policy                                                                                                             |
+| Authorization        | Per-client role enablement (compose/ingress/db)                                                                                                  |
+| Compose validation   | Deny-list (privileged, host network, host paths, etc.); bind-mount sources resolved and confined to the project's own tree or allowed host paths |
+| Compose hardening    | Automatic injection (no-new-privileges, cap_drop ALL, read_only, etc.)                                                                           |
+| Network isolation    | Docker `--internal` networks per project (no internet by default)                                                                                |
+| Resource limits      | Cross-project budget tracking (containers, memory, CPU)                                                                                          |
+| Ingress validation   | Domain allow/deny, upstream allow/deny, rate limit caps                                                                                          |
+| DB isolation         | Separate database per project, REVOKE CONNECT FROM PUBLIC                                                                                        |
+| DB resource limits   | Connection limits, GUC parameters, disk quota monitoring                                                                                         |
+| DB credential policy | Password complexity, username deny lists, SCRAM-SHA-256                                                                                          |
+| DB SQL safety        | Identifier quoting, parameterized queries, GUC allowlist                                                                                         |
+| Agent process        | systemd hardening (ProtectSystem=strict, no capabilities, PrivateTmp)                                                                            |
+| File paths           | Sanitized, no path traversal, restricted host paths, fixed owner/modes                                                                           |
+| Logging              | Forced json-file driver with size limits on all containers                                                                                       |
 
 ## Dependencies
 

@@ -8,11 +8,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/opsen/agent/internal/config"
 	"github.com/opsen/agent/internal/identity"
 )
+
+// projectSlugPattern is the alphabet a project name (the `{project}` URL path
+// segment) must match. The slug becomes a directory name under the client
+// directory and part of the compose project name, and the router hands over
+// percent-encoded separators (`%2e%2e`, `..%2f..`) unescaped — so anything
+// outside this alphabet is rejected before it can reach a path.
+var projectSlugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// requireProjectSlug returns the validated project name from the request path, or
+// writes a 400 and returns "" when it is missing or malformed.
+func requireProjectSlug(w http.ResponseWriter, r *http.Request) string {
+	slug := r.PathValue("project")
+	if slug == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project name is required"})
+		return ""
+	}
+	if !projectSlugPattern.MatchString(slug) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid project name: %q (allowed: letters, digits, '-' and '_')", slug)})
+		return ""
+	}
+	return slug
+}
 
 type Handler struct {
 	cfg         *config.AgentConfig
@@ -71,9 +94,8 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projectSlug := r.PathValue("project")
+	projectSlug := requireProjectSlug(w, r)
 	if projectSlug == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project name is required"})
 		return
 	}
 
@@ -97,8 +119,14 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The project directory is what compose resolves relative bind-mount
+	// sources against, so validation needs it before anything is written.
+	projectName := fmt.Sprintf("opsen-%s-%s", client.Client, projectSlug)
+	clientDir := filepath.Join(h.cfg.Roles.Compose.DeploymentsDir, client.Client)
+	projectDir := filepath.Join(clientDir, projectSlug)
+
 	// Validate against deny-list and policies
-	violations := validateCompose(composeFile, h.cfg, client.Compose)
+	violations := validateCompose(composeFile, h.cfg, client.Compose, projectDir)
 	if len(violations) > 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":      "policy violations",
@@ -135,10 +163,15 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	// Apply hardening and namespacing
 	modifications := hardenCompose(composeFile, h.cfg, client, projectSlug, portMappings)
 
-	// Write all project files
-	projectName := fmt.Sprintf("opsen-%s-%s", client.Client, projectSlug)
-	projectDir := filepath.Join(h.cfg.Roles.Compose.DeploymentsDir, client.Client, projectSlug)
-	if err := os.MkdirAll(projectDir, 0750); err != nil {
+	// Write all project files. Modes follow the project file contract in files.go:
+	// the per-client / per-project directories stay agent-private, everything
+	// below the project directory must be readable by the (arbitrary, non-root)
+	// uid the hardened services run as, because it may be bind-mounted into them.
+	if err := ensureDir(clientDir, projectTreeDirMode); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create client directory"})
+		return
+	}
+	if err := ensureDir(projectDir, projectTreeDirMode); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create project directory"})
 		return
 	}
@@ -153,7 +186,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fullPath := filepath.Join(projectDir, cleanPath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0750); err != nil {
+		if err := ensureProjectSubdirs(projectDir, filepath.Dir(fullPath)); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to create directory for %s", relPath)})
 			return
 		}
@@ -165,13 +198,13 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to serialize compose file"})
 				return
 			}
-			if werr := os.WriteFile(fullPath, transformed, 0640); werr != nil {
+			if werr := writeProjectFile(fullPath, transformed, composeFileMode); werr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write compose file"})
 				return
 			}
 			composeFilePath = fullPath
 		} else {
-			if werr := os.WriteFile(fullPath, []byte(content), 0640); werr != nil {
+			if werr := writeProjectFile(fullPath, []byte(content), projectFileMode); werr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to write file %s", relPath)})
 				return
 			}
@@ -221,9 +254,8 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Destroy(w http.ResponseWriter, r *http.Request) {
 	client := identity.ClientFromContext(r.Context())
-	projectSlug := r.PathValue("project")
+	projectSlug := requireProjectSlug(w, r)
 	if projectSlug == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "project name is required"})
 		return
 	}
 
@@ -258,6 +290,10 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 
 	if projectSlug == "" {
 		h.statusAll(w, client)
+		return
+	}
+	if !projectSlugPattern.MatchString(projectSlug) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid project name: %q", projectSlug)})
 		return
 	}
 
