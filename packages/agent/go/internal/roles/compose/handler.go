@@ -135,10 +135,18 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	// Apply hardening and namespacing
 	modifications := hardenCompose(composeFile, h.cfg, client, projectSlug, portMappings)
 
-	// Write all project files
+	// Write all project files. Modes follow the project file contract in files.go:
+	// the per-client / per-project directories stay agent-private, everything
+	// below the project directory must be readable by the (arbitrary, non-root)
+	// uid the hardened services run as, because it may be bind-mounted into them.
 	projectName := fmt.Sprintf("opsen-%s-%s", client.Client, projectSlug)
-	projectDir := filepath.Join(h.cfg.Roles.Compose.DeploymentsDir, client.Client, projectSlug)
-	if err := os.MkdirAll(projectDir, 0750); err != nil {
+	clientDir := filepath.Join(h.cfg.Roles.Compose.DeploymentsDir, client.Client)
+	projectDir := filepath.Join(clientDir, projectSlug)
+	if err := ensureDir(clientDir, projectTreeDirMode); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create client directory"})
+		return
+	}
+	if err := ensureDir(projectDir, projectTreeDirMode); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create project directory"})
 		return
 	}
@@ -153,7 +161,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fullPath := filepath.Join(projectDir, cleanPath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0750); err != nil {
+		if err := ensureProjectSubdirs(projectDir, filepath.Dir(fullPath)); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to create directory for %s", relPath)})
 			return
 		}
@@ -165,13 +173,13 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to serialize compose file"})
 				return
 			}
-			if werr := os.WriteFile(fullPath, transformed, 0640); werr != nil {
+			if werr := writeProjectFile(fullPath, transformed, composeFileMode); werr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write compose file"})
 				return
 			}
 			composeFilePath = fullPath
 		} else {
-			if werr := os.WriteFile(fullPath, []byte(content), 0640); werr != nil {
+			if werr := writeProjectFile(fullPath, []byte(content), projectFileMode); werr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to write file %s", relPath)})
 				return
 			}
