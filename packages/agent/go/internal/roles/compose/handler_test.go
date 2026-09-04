@@ -246,3 +246,147 @@ func TestRedeployProject_RepairsLegacyFileModes(t *testing.T) {
 		t.Fatalf("expected tracker hash %q after redeploy, got %+v", newHash, res)
 	}
 }
+
+// ── Bind-mount source confinement ──────────────────────────
+
+// peekCompose is a single hardened-by-default service with one volume entry.
+func peekCompose(volume string) string {
+	return "services:\n  peek:\n    image: busybox\n    volumes:\n      - " + volume + "\n"
+}
+
+func TestDeploy_RejectsBindMountsIntoOtherProjects(t *testing.T) {
+	h, deploymentsDir := testHandler(t)
+
+	// Client b's project holds a mapped file on disk — the tree another client
+	// would target now that mapped files are world-readable.
+	if rr := deployProject(t, h, minimalClient("b"), "grm", map[string]string{
+		"compose.yml":                        mappedFileCompose,
+		"files/web/etc/grm/config.toml.tmpl": "secret\n",
+	}); rr.Code != http.StatusOK {
+		t.Fatalf("victim deploy: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	victimFiles := filepath.Join(deploymentsDir, "b", "grm", "files")
+
+	attacker := minimalClient("a")
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"absolute source", map[string]string{
+			"compose.yml": peekCompose(victimFiles + ":/peek:ro"),
+		}, "overlaps the agent deployments directory"},
+		{"relative source", map[string]string{
+			"compose.yml": peekCompose("../../b/grm/files:/peek:ro"),
+		}, "overlaps the agent deployments directory"},
+		{"source interpolated from the project's own .env", map[string]string{
+			"compose.yml": peekCompose("${PEEK}:/peek:ro"),
+			".env":        "PEEK=" + victimFiles + "\n",
+		}, "interpolated"},
+		{"bind volume via driver_opts", map[string]string{
+			"compose.yml": peekCompose("peek:/peek:ro") +
+				"volumes:\n  peek:\n    driver: local\n    driver_opts:\n      type: none\n      o: bind\n      device: " + victimFiles + "\n",
+		}, "overlaps the agent deployments directory"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := deployProject(t, h, attacker, "peek", tc.files)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), tc.want) {
+				t.Errorf("expected violation containing %q, got %s", tc.want, rr.Body.String())
+			}
+		})
+	}
+
+	// Validation runs before anything is written for the rejected project.
+	if _, err := os.Stat(filepath.Join(deploymentsDir, "a")); !os.IsNotExist(err) {
+		t.Errorf("expected nothing written for the rejected client, stat err = %v", err)
+	}
+
+	// The shape the guard exists to keep working: a read-only mount of the
+	// project's own mapped file.
+	rr := deployProject(t, h, attacker, "peek", map[string]string{
+		"compose.yml":                        mappedFileCompose,
+		"files/web/etc/grm/config.toml.tmpl": "mine\n",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("own mapped file: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDeploy_RelativeSourceCannotBypassDenyList(t *testing.T) {
+	h, _ := testHandler(t)
+	h.cfg.Deny.HostPaths = []string{"/", "/etc", "/var/run/docker.sock", "/proc", "/sys", "/dev"}
+
+	rr := deployProject(t, h, minimalClient("acme"), "grm", map[string]string{
+		"compose.yml": peekCompose(strings.Repeat("../", 12) + "etc:/host-etc:ro"),
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "not allowed") || !strings.Contains(body, "resolves to '/etc'") {
+		t.Errorf("expected a deny-list violation naming /etc, got %s", body)
+	}
+}
+
+func TestDeploy_RejectsWritableMountOfProjectTree(t *testing.T) {
+	h, _ := testHandler(t)
+	rr := deployProject(t, h, minimalClient("acme"), "grm", map[string]string{
+		"compose.yml": peekCompose("./files/peek/data:/data"),
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "must be mounted read-only") {
+		t.Errorf("expected read-only violation, got %s", rr.Body.String())
+	}
+}
+
+// ── Project name ───────────────────────────────────────────
+
+func destroyProject(t *testing.T, h *Handler, client *config.ClientPolicy, project string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, "/v1/compose/projects/"+project, nil)
+	req = req.WithContext(identity.WithClient(req.Context(), client))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /v1/compose/projects/{project}", h.Destroy)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestProjectSlug_RejectsNamesThatEscapeTheClientDir(t *testing.T) {
+	h, deploymentsDir := testHandler(t)
+	client := minimalClient("acme")
+
+	// A compose file at the deployments root is what a `..` slug would resolve
+	// to — and what Destroy would `RemoveAll` around.
+	mkdirWithMode(t, deploymentsDir, 0o750)
+	writeWithMode(t, filepath.Join(deploymentsDir, "compose.yml"), "services: {}\n", 0o640)
+
+	// The router unescapes percent-encoded separators into the slug.
+	for _, slug := range []string{"%2e%2e", "..%2f..%2fescape", "a%2fb", "-leading-dash", "with.dot", "sp%20ace"} {
+		if rr := deployProject(t, h, client, slug, map[string]string{"compose.yml": mappedFileCompose}); rr.Code != http.StatusBadRequest {
+			t.Errorf("deploy %q: expected 400, got %d: %s", slug, rr.Code, rr.Body.String())
+		}
+		if rr := destroyProject(t, h, client, slug); rr.Code != http.StatusBadRequest {
+			t.Errorf("destroy %q: expected 400, got %d: %s", slug, rr.Code, rr.Body.String())
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(deploymentsDir, "compose.yml")); err != nil {
+		t.Errorf("expected the deployments root to be untouched, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(deploymentsDir, "..", "escape")); !os.IsNotExist(err) {
+		t.Errorf("expected nothing written outside the deployments dir, stat err = %v", err)
+	}
+
+	for _, slug := range []string{"grm", "my-app_2", "A1"} {
+		if rr := deployProject(t, h, client, slug, map[string]string{"compose.yml": mappedFileCompose}); rr.Code != http.StatusOK {
+			t.Errorf("deploy %q: expected 200, got %d: %s", slug, rr.Code, rr.Body.String())
+		}
+	}
+}

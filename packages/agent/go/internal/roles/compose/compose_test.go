@@ -7,8 +7,18 @@ import (
 	"github.com/opsen/agent/internal/config"
 )
 
+// testDeploymentsDir / testProjectDir are the (absolute) paths validation
+// resolves bind-mount sources against in unit tests: client c1, project p.
+const (
+	testDeploymentsDir = "/var/lib/opsen-agent/deployments"
+	testProjectDir     = testDeploymentsDir + "/c1/p"
+)
+
 func minimalConfig() *config.AgentConfig {
 	return &config.AgentConfig{
+		Roles: config.RolesConfig{
+			Compose: &config.ComposeRoleConfig{DeploymentsDir: testDeploymentsDir},
+		},
 		GlobalHardening: config.GlobalHardening{},
 		Deny: config.DenyRules{
 			PidMode: "host",
@@ -208,7 +218,7 @@ func TestValidateCompose_PidsLimitWithinCap(t *testing.T) {
 	client := minimalClient("c1")
 	client.Compose.PerContainer.MaxPids = 256
 
-	violations := validateCompose(compose, cfg, client.Compose)
+	violations := validateCompose(compose, cfg, client.Compose, testProjectDir)
 
 	if len(violations) != 0 {
 		t.Fatalf("expected no violations, got %v", violations)
@@ -225,7 +235,7 @@ func TestValidateCompose_PidsLimitOverCap(t *testing.T) {
 	client := minimalClient("c1")
 	client.Compose.PerContainer.MaxPids = 256
 
-	violations := validateCompose(compose, cfg, client.Compose)
+	violations := validateCompose(compose, cfg, client.Compose, testProjectDir)
 
 	if !hasViolation(violations, "service web: pids limit 300 exceeds per-container max 256") {
 		t.Fatalf("expected pids cap violation, got %v", violations)
@@ -241,7 +251,7 @@ func TestValidateCompose_PidsLimitNonPositive(t *testing.T) {
 	cfg := minimalConfig()
 	client := minimalClient("c1")
 
-	violations := validateCompose(compose, cfg, client.Compose)
+	violations := validateCompose(compose, cfg, client.Compose, testProjectDir)
 
 	if !hasViolation(violations, "service web: pids_limit must be > 0") {
 		t.Fatalf("expected non-positive pids violation, got %v", violations)
@@ -259,7 +269,7 @@ func TestValidateCompose_DefaultPidsOverCap(t *testing.T) {
 	client.Compose.PerContainer.DefaultPids = 300
 	client.Compose.PerContainer.MaxPids = 256
 
-	violations := validateCompose(compose, cfg, client.Compose)
+	violations := validateCompose(compose, cfg, client.Compose, testProjectDir)
 
 	if !hasViolation(violations, "service web: pids limit 300 exceeds per-container max 256") {
 		t.Fatalf("expected default pids cap violation, got %v", violations)
@@ -652,7 +662,7 @@ func TestValidateCompose_ReservesChownSidecarLabel(t *testing.T) {
 		},
 	}
 
-	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose)
+	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose, testProjectDir)
 
 	if !hasViolation(violations, "label 'opsen.generated' is reserved for agent-generated helpers") {
 		t.Fatalf("expected reserved-label violation, got %v", violations)
@@ -683,7 +693,7 @@ func TestValidateCompose_ReservesChownSidecarSuffix(t *testing.T) {
 		},
 	}
 
-	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose)
+	violations := validateCompose(compose, minimalConfig(), minimalClient("c1").Compose, testProjectDir)
 
 	if !hasViolation(violations, "is reserved for agent-generated helpers") {
 		t.Fatalf("expected reserved-suffix violation, got %v", violations)

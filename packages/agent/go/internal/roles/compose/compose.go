@@ -100,7 +100,9 @@ func marshalCompose(compose *ComposeFile) ([]byte, error) {
 
 // validateCompose checks the compose file against deny-list and client policies.
 // This validates the SINGLE compose file. Cross-project budget checks happen in the tracker.
-func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *config.ComposePolicy) []string {
+// projectDir is the directory the project will be brought up from; relative
+// bind-mount sources resolve against it (see bindmounts.go).
+func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *config.ComposePolicy, projectDir string) []string {
 	var violations []string
 
 	// Service count per project
@@ -151,13 +153,12 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 		}
 
 		for _, vol := range svc.Volumes {
-			hostPath := extractHostPath(vol)
-			if hostPath != "" {
-				if isBlockedPath(hostPath, cfg.Deny.HostPaths) {
-					violations = append(violations, fmt.Sprintf("service %s: host path '%s' not allowed", name, hostPath))
-				} else if !isAllowedPath(hostPath, policy.Volumes.AllowedHostPaths) {
-					violations = append(violations, fmt.Sprintf("service %s: host path '%s' not in allowed paths", name, hostPath))
-				}
+			m, ok := parseBindMount("service "+name, vol)
+			if !ok {
+				continue
+			}
+			if v := validateBindMount(m, projectDir, cfg, policy); v != "" {
+				violations = append(violations, v)
 			}
 		}
 
@@ -208,6 +209,8 @@ func validateCompose(compose *ComposeFile, cfg *config.AgentConfig, policy *conf
 			}
 		}
 	}
+
+	violations = append(violations, validateVolumeDefinitions(compose, projectDir, cfg, policy)...)
 
 	return violations
 }
@@ -447,38 +450,6 @@ func hardenCompose(compose *ComposeFile, cfg *config.AgentConfig, client *config
 	return modifications
 }
 
-func extractHostPath(volume string) string {
-	if !strings.Contains(volume, "/") && !strings.HasPrefix(volume, ".") {
-		return ""
-	}
-	parts := strings.SplitN(volume, ":", 2)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[0]
-}
-
-func isBlockedPath(path string, blocked []string) bool {
-	for _, b := range blocked {
-		if path == b || strings.HasPrefix(path, b+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllowedPath(path string, allowed []string) bool {
-	if len(allowed) == 0 {
-		return true
-	}
-	for _, a := range allowed {
-		if strings.HasPrefix(path, a) {
-			return true
-		}
-	}
-	return false
-}
-
 func isAllowedCapability(cap string, allowed []string) bool {
 	cap = strings.ToUpper(cap)
 	for _, a := range allowed {
@@ -588,7 +559,7 @@ func namedVolumeMounts(volumes []string) []volumeMount {
 			continue
 		}
 		// Bind mounts have a path-like source; named volumes are bare names.
-		if strings.Contains(source, "/") || strings.HasPrefix(source, ".") {
+		if isBindMountSource(source) {
 			continue
 		}
 		if len(parts) >= 3 && isReadOnlyMode(parts[2]) {

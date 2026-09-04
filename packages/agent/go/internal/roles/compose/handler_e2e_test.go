@@ -14,7 +14,6 @@ package compose
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +23,6 @@ import (
 	"time"
 
 	"github.com/opsen/agent/internal/config"
-	"github.com/opsen/agent/internal/identity"
 )
 
 func requireDocker(t *testing.T) {
@@ -82,17 +80,6 @@ func waitForContainerExit(t *testing.T, container string, timeout time.Duration)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-}
-
-func destroyProject(t *testing.T, h *Handler, client *config.ClientPolicy, project string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/compose/projects/"+project, nil)
-	req = req.WithContext(identity.WithClient(req.Context(), client))
-	mux := http.NewServeMux()
-	mux.HandleFunc("DELETE /v1/compose/projects/{project}", h.Destroy)
-	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, req)
-	return rr
 }
 
 // A hardened service — non-root user unrelated to the host user, cap_drop ALL,
