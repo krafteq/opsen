@@ -1,5 +1,45 @@
 # @opsen/agent
 
+## 0.8.1
+
+### Patch Changes
+
+- ff35dba: Make bind-mounted project files readable by hardened non-root Compose services (OPSEN-6).
+
+  Files delivered through the Compose deploy `files` map (app-platform `MappedFile`, bind-mounted as `./files/<process>/<path>:<path>:ro`) were written `opsen-agent:opsen-agent 0640` inside `0750` directories. `hardenCompose` runs every service as a non-root `default_user` with `cap_drop: ALL`, so the container had neither owner, group nor "other" read permission and no `CAP_DAC_OVERRIDE`: every mapped file was unreadable by a non-elevated service (`template not found or not readable: /etc/grm/config.toml.tmpl`), and the only workaround was `_docker.elevated: true`, which defeats the non-root hardening.
+
+  The agent (non-root itself, so it cannot chown to the service uid) now writes the project tree under a fixed mode contract, pinned with an explicit chmod so a redeploy over files written by an older version repairs them: non-compose project files `0644` and every directory below the project directory `0755`, while the per-client / per-project directories stay `0750` and the compose file (never bind-mounted, carries env secrets) stays `0640`. The reconciler re-applies the contract to existing project trees on its next policy-hash-driven redeploy, so already-deployed projects self-heal without a client-side redeploy. The contract is documented in `spec.md` under "Project File Ownership and Modes".
+
+  Because Docker resolves a bind-mount source as root, world-readable project files would have been reachable from _another_ client's container through a bind mount of `deployments/<client>/<project>/files` (absolute or `../../…`): the default deny list does not cover the deployments directory and `allowed_host_paths` is allow-all when unset. Bind-mount sources are therefore now resolved (relative to the project directory) and confined before anything is written: a source below the deploying project's own directory is allowed and must be read-only, a source that overlaps the agent deployments directory anywhere else is rejected, and only the remainder is matched — resolved, on path boundaries — against `deny.host_paths` and `allowed_host_paths`. That also closes `../..`-style traversal past the deny list, `.env`-interpolated (`${VAR}`) and `~`-relative sources, and `driver_opts` bind volumes, none of which the validator resolved before. Newly rejected as a consequence: a writable bind mount of the project tree (use a named volume — the ownership init sidecar makes it writable for a non-root service) and the project directory `.` itself as a source. The rules are documented in `spec.md` under "Bind-Mount Source Confinement".
+
+  The project name in the deploy URL is now restricted to `[A-Za-z0-9][A-Za-z0-9_-]*`; a percent-encoded `..` segment previously escaped the client directory.
+
+  Consumers that set `_docker.elevated: true` only to make mapped files readable can drop it once this version is installed on their VMs.
+
+- b6f293c: Support rotating an existing database owner's password through `PATCH /v1/db/databases/{name}` with `owner.password`, alone or alongside limits. Validate the client's password policy, preserve owner identity, and apply PostgreSQL changes transactionally so failures cannot report a successful rotation. Passwords are not persisted in agent state or included in responses or agent logs.
+- bfae7a5: fix(agent): ingress upstream deny list no longer skipped by an unparseable target
+
+  `policy.MatchUpstream` returned a bare `bool`, so "could not parse this target"
+  was indistinguishable from "this target does not match". At the deny-list call
+  site that read as "not denied", so a route whose `upstream` carried a scheme
+  (`h2c://10.0.0.5:8080`) or a trailing path (`10.0.0.5:8080/`) walked past
+  `deny_targets` — and because the drivers write `upstream` into the proxy config
+  verbatim, it was a working route rather than one that broke at reload.
+
+  An upstream that is not a bare `host:port` is now rejected with a policy
+  violation naming the route, under a deny-only policy and an allow-list policy
+  alike.
+
+  Separately, portless deny patterns (`10.0.0.5`, `10.0.0.0/8`) previously matched
+  nothing at all — the host-only fallback the code's own comment promised was
+  never implemented, so a plausible `deny_targets` entry was a silent no-op. A
+  pattern with no port half now matches the host on any port, and patterns that
+  could never match (malformed CIDR, non-numeric or inverted port range, missing
+  host) fail the client policy file at load instead of loading inert.
+
+  Scope: defense-in-depth on an mTLS-authenticated deploy client's own routes, not
+  the primary authorization boundary.
+
 ## 0.8.0
 
 ### Minor Changes
