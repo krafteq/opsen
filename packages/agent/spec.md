@@ -354,7 +354,7 @@ The db role does **not** install or manage PostgreSQL itself. It assumes a runni
 | Method   | Path                                   | Description                               |
 | -------- | -------------------------------------- | ----------------------------------------- |
 | `PUT`    | `/v1/db/databases/{name}`              | Create or replace a database + owner role |
-| `PATCH`  | `/v1/db/databases/{name}`              | Update limits                             |
+| `PATCH`  | `/v1/db/databases/{name}`              | Update limits and/or owner password       |
 | `DELETE` | `/v1/db/databases/{name}`              | Drop database + all roles                 |
 | `GET`    | `/v1/db/databases/{name}`              | Get database status (size, connections)   |
 | `GET`    | `/v1/db/databases`                     | List all databases for the client         |
@@ -419,6 +419,41 @@ The db role does **not** install or manage PostgreSQL itself. It assumes a runni
   "port": 5432
 }
 ```
+
+#### Update Database (`PATCH /v1/db/databases/myapp`)
+
+```json
+{
+  "owner": { "password": "NewSecureP@ss123!" },
+  "limits": { "connection_limit": 20 }
+}
+```
+
+`owner` and `limits` are optional, but at least one must be provided. Existing
+limits-only requests remain supported. When `owner` is provided, `password` must
+be nonempty plaintext, contain no NUL bytes, and satisfy the client's password
+policy. PostgreSQL verifier-shaped values are rejected: a 35-byte value starting
+with `md5`, or any value starting with `SCRAM-SHA-256$`. PostgreSQL would otherwise
+store those as verifiers rather than hash the supplied password.
+The agent rotates the existing tracked owner role; this API does not change
+its username, database ownership, grants, or data. A password-only request does
+not change limits or role settings.
+
+The database must be tracked for the authenticated client (`404` otherwise),
+and the client must have a database policy (`403` otherwise). Invalid requests
+or policy violations return `400`. PostgreSQL updates are committed in one
+transaction, including SCRAM-SHA-256 password rotation and any supplied limits
+or role settings. SQL failures return `500`, and tracked limits are updated
+only after the SQL transaction succeeds. A successful response is
+`{"status":"updated","database":"myapp"}`. Passwords are never written to
+agent state or included in responses or agent logs.
+
+Rotation immediately replaces the password for new connections; it does not
+terminate existing sessions or provide a dual-password grace period. Coordinate
+workload credential updates with rotation. Repeating the same password is safe.
+A `404` on a nonexistent database is not evidence of rotation support: older
+agents also return it before decoding PATCH bodies. Verify support against the
+deployed agent release and verify new credentials with a fresh connection.
 
 #### Drop Database
 

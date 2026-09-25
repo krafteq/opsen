@@ -1,0 +1,46 @@
+name: Agent Go
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'packages/agent/go/**'
+      - '.github/workflows/agent-go.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/agent/go/**'
+      - '.github/workflows/agent-go.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/agent/go
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: opsen-ci-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OPSEN_TEST_POSTGRES_DSN: postgres://postgres:opsen-ci-test-password@127.0.0.1:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/agent/go/go.mod
+          cache-dependency-path: packages/agent/go/go.sum
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./...

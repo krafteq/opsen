@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/lib/pq"
 	"github.com/opsen/agent/internal/config"
-	_ "github.com/lib/pq"
 )
 
 // PgManager handles all direct PostgreSQL operations.
@@ -80,6 +80,51 @@ func (p *PgManager) CreateRole(name string, opts RoleOptions) error {
 	}
 
 	return nil
+}
+
+// UpdateDatabase applies a PATCH atomically in PostgreSQL. Password encryption
+// is set on the same transaction/connection as ALTER ROLE, never on an arbitrary
+// pooled connection. A password-only update leaves limits and role GUCs intact.
+func (p *PgManager) UpdateDatabase(database, owner string, password *string, connectionLimit int, gucs map[string]string) error {
+	if !isValidIdentifier(database) || !isValidIdentifier(owner) {
+		return fmt.Errorf("invalid database or owner name")
+	}
+	if password != nil && !isValidPlaintextPassword(*password) {
+		return fmt.Errorf("invalid owner password")
+	}
+	for param := range gucs {
+		if !isValidGUCParam(param) {
+			return fmt.Errorf("invalid role parameter")
+		}
+	}
+
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if connectionLimit > 0 {
+		if _, err := tx.Exec(fmt.Sprintf("ALTER DATABASE %s CONNECTION LIMIT %d", quoteIdent(database), connectionLimit)); err != nil {
+			return err
+		}
+	}
+	for param, value := range gucs {
+		if _, err := tx.Exec(fmt.Sprintf("ALTER ROLE %s SET %s = %s", quoteIdent(owner), param, pq.QuoteLiteral(value))); err != nil {
+			return err
+		}
+	}
+	if password != nil {
+		if _, err := tx.Exec("SET LOCAL password_encryption = 'scram-sha-256'"); err != nil {
+			return err
+		}
+		// ALTER ROLE does not accept a bind parameter for PASSWORD. lib/pq's
+		// literal quoting handles both quotes and backslashes safely.
+		if _, err := tx.Exec(fmt.Sprintf("ALTER ROLE %s PASSWORD %s", quoteIdent(owner), pq.QuoteLiteral(*password))); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (p *PgManager) DropRole(name string) error {
@@ -427,14 +472,14 @@ func isValidExtensionName(s string) bool {
 // isValidGUCParam checks that a parameter name is a valid GUC name.
 func isValidGUCParam(s string) bool {
 	allowed := map[string]bool{
-		"statement_timeout":                    true,
-		"work_mem":                             true,
-		"temp_file_limit":                      true,
-		"idle_in_transaction_session_timeout":   true,
-		"maintenance_work_mem":                 true,
-		"temp_buffers":                         true,
-		"log_statement":                        true,
-		"log_min_duration_statement":           true,
+		"statement_timeout":                   true,
+		"work_mem":                            true,
+		"temp_file_limit":                     true,
+		"idle_in_transaction_session_timeout": true,
+		"maintenance_work_mem":                true,
+		"temp_buffers":                        true,
+		"log_statement":                       true,
+		"log_min_duration_statement":          true,
 	}
 	return allowed[s]
 }

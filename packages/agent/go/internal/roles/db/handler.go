@@ -60,13 +60,13 @@ type OwnerSpec struct {
 }
 
 type DatabaseLimitsSpec struct {
-	MaxSizeMb                  int    `json:"max_size_mb,omitempty"`
-	ConnectionLimit            int    `json:"connection_limit,omitempty"`
-	StatementTimeout           string `json:"statement_timeout,omitempty"`
-	WorkMem                    string `json:"work_mem,omitempty"`
-	TempFileLimit              string `json:"temp_file_limit,omitempty"`
-	IdleInTransactionTimeout   string `json:"idle_in_transaction_timeout,omitempty"`
-	MaintenanceWorkMem         string `json:"maintenance_work_mem,omitempty"`
+	MaxSizeMb                int    `json:"max_size_mb,omitempty"`
+	ConnectionLimit          int    `json:"connection_limit,omitempty"`
+	StatementTimeout         string `json:"statement_timeout,omitempty"`
+	WorkMem                  string `json:"work_mem,omitempty"`
+	TempFileLimit            string `json:"temp_file_limit,omitempty"`
+	IdleInTransactionTimeout string `json:"idle_in_transaction_timeout,omitempty"`
+	MaintenanceWorkMem       string `json:"maintenance_work_mem,omitempty"`
 }
 
 type CreateDatabaseResponse struct {
@@ -308,21 +308,32 @@ func (h *Handler) listDatabases(w http.ResponseWriter, client *config.ClientPoli
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"client":       client.Client,
-		"databases":    databases,
+		"client":        client.Client,
+		"databases":     databases,
 		"total_size_mb": totalSizeMb,
-		"count":        len(databases),
+		"count":         len(databases),
 	})
 }
 
 // ── Update Database ─────────────────────────────────────
 
+// OwnerPasswordPatch rotates the existing tracked owner's password without
+// changing the role identity or database ownership.
+type OwnerPasswordPatch struct {
+	Password string `json:"password"`
+}
+
 type UpdateDatabaseRequest struct {
+	Owner  *OwnerPasswordPatch `json:"owner,omitempty"`
 	Limits *DatabaseLimitsSpec `json:"limits,omitempty"`
 }
 
 func (h *Handler) UpdateDatabase(w http.ResponseWriter, r *http.Request) {
 	client := identity.ClientFromContext(r.Context())
+	if client == nil || client.Db == nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "db role not allowed for this client"})
+		return
+	}
 	name := r.PathValue("name")
 	if name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "database name is required"})
@@ -340,14 +351,27 @@ func (h *Handler) UpdateDatabase(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-
-	if req.Limits == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limits are required"})
+	if req.Owner == nil && req.Limits == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "owner.password or limits are required"})
 		return
 	}
 
-	// Validate limits against policy
-	violations := validateLimits(req.Limits, client.Db)
+	// Validate the complete request before changing PostgreSQL or tracked state.
+	var password *string
+	var violations []string
+	if req.Owner != nil {
+		if !isValidPlaintextPassword(req.Owner.Password) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "owner.password must be nonempty plaintext without NUL bytes or a PostgreSQL password verifier"})
+			return
+		}
+		violations = append(violations, validatePassword(req.Owner.Password, record.OwnerRole, client.Db)...)
+		password = &req.Owner.Password
+	}
+	connectionLimit := 0
+	if req.Limits != nil {
+		violations = append(violations, validateLimits(req.Limits, client.Db)...)
+		connectionLimit = req.Limits.ConnectionLimit
+	}
 	if len(violations) > 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":      "policy violations",
@@ -356,29 +380,25 @@ func (h *Handler) UpdateDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update connection limit on database
-	if req.Limits.ConnectionLimit > 0 {
-		if err := h.pg.AlterDatabaseConnectionLimit(record.DatabaseName, req.Limits.ConnectionLimit); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to update connection limit: %v", err)})
-			return
+	if err := h.pg.UpdateDatabase(record.DatabaseName, record.OwnerRole, password, connectionLimit, buildRoleGUCs(req.Limits, client.Db)); err != nil {
+		// PostgreSQL errors can contain SQL/password material (e.g. from hooks).
+		// Neither return nor log the raw error on this credential-bearing path.
+		h.logger.Error("failed to update database", "client", client.Client, "database", record.DatabaseName)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update database"})
+		return
+	}
+
+	// Do not mutate the tracker record until all SQL changes have committed.
+	updated := *record
+	if req.Limits != nil {
+		if req.Limits.ConnectionLimit > 0 {
+			updated.ConnectionLimit = req.Limits.ConnectionLimit
 		}
-		record.ConnectionLimit = req.Limits.ConnectionLimit
-	}
-
-	// Update role GUCs
-	gucs := buildRoleGUCs(req.Limits, client.Db)
-	for param, value := range gucs {
-		if err := h.pg.SetRoleParam(record.OwnerRole, param, value); err != nil {
-			h.logger.Error("failed to set role param", "role", record.OwnerRole, "param", param, "error", err)
+		if req.Limits.MaxSizeMb > 0 {
+			updated.MaxSizeMb = req.Limits.MaxSizeMb
 		}
 	}
-
-	// Update tracked size limit
-	if req.Limits.MaxSizeMb > 0 {
-		record.MaxSizeMb = req.Limits.MaxSizeMb
-	}
-
-	h.tracker.Set(client.Client, name, record)
+	h.tracker.Set(client.Client, name, &updated)
 
 	h.logger.Info("database updated", "client", client.Client, "database", record.DatabaseName)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "database": record.DatabaseName})
