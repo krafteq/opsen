@@ -5,6 +5,7 @@ go 1.24
 toolchain go1.24.13
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/lib/pq v1.10.9
 	gopkg.in/yaml.v3 v3.0.1
 )

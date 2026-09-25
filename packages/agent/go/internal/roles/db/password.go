@@ -73,3 +73,12 @@ func containsSpecial(s string) bool {
 	}
 	return false
 }
+
+// isValidPlaintextPassword excludes values PostgreSQL treats as pre-encrypted
+// verifiers instead of hashing as plaintext, even with password_encryption set.
+// Reject the full reserved shapes rather than depending on server parser details.
+func isValidPlaintextPassword(password string) bool {
+	return password != "" && !strings.ContainsRune(password, '\x00') &&
+		!(strings.HasPrefix(password, "md5") && len(password) == 35) &&
+		!strings.HasPrefix(password, "SCRAM-SHA-256$")
+}
