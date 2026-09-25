@@ -12,6 +12,9 @@ on:
       - 'packages/agent/go/**'
       - '.github/workflows/agent-go.yml'
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
