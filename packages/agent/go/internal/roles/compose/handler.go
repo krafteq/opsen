@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -80,11 +81,11 @@ type DeployRequest struct {
 }
 
 type DeployResponse struct {
-	Status   string                       `json:"status"`
-	Project  string                       `json:"project"`
-	Services []string                     `json:"services,omitempty"`
-	Modified []string                     `json:"policy_modifications,omitempty"`
-	Ports    map[string]map[string]int    `json:"ports,omitempty"` // service -> container_port -> host_port
+	Status   string                    `json:"status"`
+	Project  string                    `json:"project"`
+	Services []string                  `json:"services,omitempty"`
+	Modified []string                  `json:"policy_modifications,omitempty"`
+	Ports    map[string]map[string]int `json:"ports,omitempty"` // service -> container_port -> host_port
 }
 
 func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
@@ -301,11 +302,14 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	output, err := h.composePsJSON(projectName)
 
 	status := "running"
+	containers := json.RawMessage("[]")
+	if err == nil {
+		containers, err = containersJSON(output)
+	}
 	if err != nil {
+		h.logger.Warn("compose status unavailable", "client", client.Client, "project", projectSlug, "error", err)
 		status = "unknown"
-		output = []byte("[]")
-	} else if len(strings.TrimSpace(string(output))) == 0 {
-		output = []byte("[]")
+		containers = json.RawMessage("[]")
 	}
 
 	resources := h.tracker.GetProject(client.Client, projectSlug)
@@ -313,7 +317,7 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"project":    projectName,
 		"status":     status,
-		"containers": json.RawMessage(output),
+		"containers": containers,
 		"resources":  resources,
 	})
 }
@@ -423,7 +427,38 @@ func (h *Handler) composePsJSON(project string) ([]byte, error) {
 
 	args := append(parts[1:], "-p", project, "ps", "--format", "json")
 	cmd := exec.Command(parts[0], args...)
-	return cmd.CombinedOutput()
+	// Stdout only: compose writes warnings to stderr, which would corrupt the JSON.
+	return cmd.Output()
+}
+
+// containersJSON normalizes `compose ps --format json` output to a JSON array.
+// Compose ≥2.21 prints one object per line (NDJSON); older versions print an
+// array. Embedding NDJSON verbatim makes the whole response fail to encode.
+func containersJSON(output []byte) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 {
+		return json.RawMessage("[]"), nil
+	}
+	if trimmed[0] == '[' {
+		if !json.Valid(trimmed) {
+			return nil, fmt.Errorf("invalid compose ps JSON array")
+		}
+		return json.RawMessage(trimmed), nil
+	}
+	containers := []json.RawMessage{}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	for dec.More() {
+		var container json.RawMessage
+		if err := dec.Decode(&container); err != nil {
+			return nil, fmt.Errorf("invalid compose ps JSON: %w", err)
+		}
+		containers = append(containers, container)
+	}
+	out, err := json.Marshal(containers)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(out), nil
 }
 
 func findComposeFile(files map[string]string) string {
