@@ -24,6 +24,31 @@ function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'"
 }
 
+/**
+ * Creates the agent user and its directories. Non-root targets run this through
+ * `sudo sh -c` (dash on Ubuntu), so it must stay POSIX sh: no bash-only syntax.
+ */
+export function buildSetupCommands(user: string, ingressConfigDir?: string): string[] {
+  const cmds = [
+    'set -e',
+    'id -u opsen-agent >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin opsen-agent',
+    'mkdir -p /etc/opsen-agent/clients /var/lib/opsen-agent/deployments /var/lib/opsen-agent/db /var/log/opsen-agent',
+    'chown -R opsen-agent:opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
+    // Client policies are written via MirrorState (the clientMirror below), which
+    // uploads over plain SFTP as the SSH user with no privilege escalation. Hand the
+    // staging dir and the parent of the `clients` symlink to the connection user so
+    // those writes succeed on non-root targets. Chown /etc/opsen-agent non-recursively
+    // so agent.yaml/*.pem inside keep their opsen-agent ownership. No-op as root.
+    // Mirrors ComposeProject's prep in @opsen/docker-compose (docker-compose.ts).
+    'mkdir -p /var/lib/mirror-state',
+    `chown ${user}:${user} /var/lib/mirror-state /etc/opsen-agent`,
+  ]
+  if (ingressConfigDir) {
+    cmds.push(`chown opsen-agent:opsen-agent ${ingressConfigDir}`)
+  }
+  return cmds
+}
+
 export class AgentInstaller extends pulumi.ComponentResource {
   declare readonly endpoint: pulumi.Output<string>
   declare readonly binaryHash: pulumi.Output<string>
@@ -54,26 +79,7 @@ export class AgentInstaller extends pulumi.ComponentResource {
     // ─── Setup remote directories + user ────────────────
     const setupCommands = pulumi
       .all([pulumi.output(args.config), pulumi.output(connUser ?? 'root')])
-      .apply(([config, user]) => {
-        const cmds = [
-          'set -e',
-          'id -u opsen-agent &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin opsen-agent',
-          'mkdir -p /etc/opsen-agent/clients /var/lib/opsen-agent/deployments /var/lib/opsen-agent/db /var/log/opsen-agent',
-          'chown -R opsen-agent:opsen-agent /var/lib/opsen-agent /var/log/opsen-agent',
-          // Client policies are written via MirrorState (the clientMirror below), which
-          // uploads over plain SFTP as the SSH user with no privilege escalation. Hand the
-          // staging dir and the parent of the `clients` symlink to the connection user so
-          // those writes succeed on non-root targets. Chown /etc/opsen-agent non-recursively
-          // so agent.yaml/*.pem inside keep their opsen-agent ownership. No-op as root.
-          // Mirrors ComposeProject's prep in @opsen/docker-compose (docker-compose.ts).
-          'mkdir -p /var/lib/mirror-state',
-          `chown ${user}:${user} /var/lib/mirror-state /etc/opsen-agent`,
-        ]
-        if (config.roles?.ingress?.configDir) {
-          cmds.push(`chown opsen-agent:opsen-agent ${config.roles.ingress.configDir}`)
-        }
-        return cmds
-      })
+      .apply(([config, user]) => buildSetupCommands(user, config.roles?.ingress?.configDir))
 
     const setup = new command.remote.Command(
       `${name}-setup`,
