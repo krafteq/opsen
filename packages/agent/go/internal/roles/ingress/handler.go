@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"sync"
 
 	"github.com/opsen/agent/internal/config"
 	"github.com/opsen/agent/internal/identity"
@@ -12,10 +14,12 @@ import (
 )
 
 type Handler struct {
-	cfg         *config.AgentConfig
-	clientStore *config.ClientStore
-	logger      *slog.Logger
-	driver      Driver
+	mutationMu    sync.Mutex
+	recoveryDirty bool
+	cfg           *config.AgentConfig
+	clientStore   *config.ClientStore
+	logger        *slog.Logger
+	driver        Driver
 }
 
 func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.Logger) *Handler {
@@ -27,7 +31,9 @@ func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger
 		driver = &TraefikDriver{configDir: cfg.Roles.Ingress.ConfigDir}
 	}
 
-	return &Handler{cfg: cfg, clientStore: clientStore, logger: logger, driver: driver}
+	h := &Handler{cfg: cfg, clientStore: clientStore, logger: logger, driver: driver, recoveryDirty: true}
+	h.Reconcile()
+	return h
 }
 
 type RouteRequest struct {
@@ -83,7 +89,14 @@ func (h *Handler) ListAppRoutes(w http.ResponseWriter, r *http.Request) {
 
 // DeleteApp deletes all routes for a specific app within the client.
 func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
+	if client.Ingress == nil {
+		writeJSON(w, 403, map[string]string{"error": "ingress role not allowed for this client"})
+		return
+	}
+
 	app := r.PathValue("app")
 	if !isValidAppName(app) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid app name"})
@@ -95,6 +108,7 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recoveryDirty = true
 	if err := h.driver.Reload(); err != nil {
 		h.logger.Error("failed to reload after app delete", "error", err)
 	}
@@ -114,7 +128,14 @@ func (h *Handler) UpdateRoutes(w http.ResponseWriter, r *http.Request) {
 
 // DeleteRoute deletes routes for the default app (legacy endpoint).
 func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
+	if client.Ingress == nil {
+		writeJSON(w, 403, map[string]string{"error": "ingress role not allowed for this client"})
+		return
+	}
+
 	routeName := r.PathValue("name")
 
 	if err := h.driver.DeleteRoute(client.Client, defaultApp, routeName); err != nil {
@@ -122,6 +143,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recoveryDirty = true
 	if err := h.driver.Reload(); err != nil {
 		h.logger.Error("failed to reload after delete", "error", err)
 	}
@@ -138,6 +160,8 @@ func (h *Handler) ListRoutes(w http.ResponseWriter, r *http.Request) {
 // ── Internal shared logic ───────────────────────────────
 
 func (h *Handler) updateRoutesForApp(w http.ResponseWriter, r *http.Request, app string) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	if client.Ingress == nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "ingress role not allowed for this client"})
@@ -178,6 +202,7 @@ func (h *Handler) updateRoutesForApp(w http.ResponseWriter, r *http.Request, app
 	}
 
 	// Reload if needed
+	h.recoveryDirty = true
 	if err := h.driver.Reload(); err != nil {
 		h.logger.Error("failed to reload ingress", "client", client.Client, "app", app, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reload ingress"})
@@ -194,7 +219,13 @@ func (h *Handler) updateRoutesForApp(w http.ResponseWriter, r *http.Request, app
 }
 
 func (h *Handler) listRoutesForApp(w http.ResponseWriter, r *http.Request, app string) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
+	if client.Ingress == nil {
+		writeJSON(w, 403, map[string]string{"error": "ingress role not allowed for this client"})
+		return
+	}
 
 	routes, err := h.driver.ListRoutes(client.Client, app)
 	if err != nil {
@@ -202,7 +233,20 @@ func (h *Handler) listRoutesForApp(w http.ResponseWriter, r *http.Request, app s
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"app": app, "routes": routes})
+	stopped := false
+	if d, ok := h.driver.(*CaddyDriver); ok {
+		if state, err := d.readState(client.Client, app); err == nil {
+			if state.Deleted {
+				writeJSON(w, 404, map[string]string{"error": "no ingress app found"})
+				return
+			}
+			stopped = state.Stopped
+		} else if !os.IsNotExist(err) {
+			writeJSON(w, 500, map[string]string{"error": "failed to read ingress state"})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"app": app, "routes": routes, "stopped": stopped})
 }
 
 func (h *Handler) validateRoutes(routes []Route, pol *config.IngressPolicy, clientName, app string) []string {
@@ -312,4 +356,69 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+// StopApp retains routes while replacing the backend response with HTTP 503.
+func (h *Handler) StopApp(w http.ResponseWriter, r *http.Request)  { h.setStopped(w, r, true) }
+func (h *Handler) StartApp(w http.ResponseWriter, r *http.Request) { h.setStopped(w, r, false) }
+func (h *Handler) setStopped(w http.ResponseWriter, r *http.Request, stopped bool) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
+	client := identity.ClientFromContext(r.Context())
+	if client.Ingress == nil {
+		writeJSON(w, 403, map[string]string{"error": "ingress role not allowed for this client"})
+		return
+	}
+	app := r.PathValue("app")
+	if !isValidAppName(app) {
+		writeJSON(w, 400, map[string]string{"error": "invalid app name"})
+		return
+	}
+	driver, ok := h.driver.(*CaddyDriver)
+	if !ok {
+		writeJSON(w, 501, map[string]string{"error": "ingress start/stop requires the Caddy driver"})
+		return
+	}
+	state, err := driver.readState(client.Client, app)
+	if err != nil {
+		status := 500
+		if os.IsNotExist(err) {
+			status = 404
+			if _, statErr := os.Stat(driver.configPath(client.Client, app)); statErr == nil {
+				status = 409
+			}
+		}
+		writeJSON(w, status, map[string]string{"error": "route definitions unavailable; PUT app routes before start/stop"})
+		return
+	}
+	if state.Deleted {
+		writeJSON(w, 404, map[string]string{"error": "no ingress app found"})
+		return
+	}
+	if violations := h.validateRoutes(state.Routes, client.Ingress, client.Client, app); !stopped && len(violations) > 0 {
+		writeJSON(w, 400, map[string]any{"error": "policy violations", "violations": violations})
+		return
+	}
+	if !stopped {
+		if err := driver.ValidateRoutes(state.Routes); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "stored routes are invalid"})
+			return
+		}
+		h.injectDefaults(state.Routes, client.Ingress)
+	}
+	state.Stopped = stopped
+	if err = driver.writeStateConfig(client.Client, app, state); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "failed to persist ingress state"})
+		return
+	}
+	h.recoveryDirty = true
+	if err = driver.Reload(); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "failed to reload ingress; retry operation"})
+		return
+	}
+	status := "started"
+	if stopped {
+		status = "stopped"
+	}
+	writeJSON(w, 200, map[string]any{"status": status, "app": app, "stopped": stopped})
 }

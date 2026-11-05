@@ -11,6 +11,8 @@ interface ComposeProjectInputs {
 /** Response from the agent's compose deploy endpoint. */
 export interface ComposeDeployResult {
   status: string
+  /** Explicit stopped state, when returned by lifecycle-aware agents. */
+  stopped?: boolean
   project: string
   services?: string[]
   policy_modifications?: string[]

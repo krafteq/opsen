@@ -56,6 +56,10 @@ func main() {
 		defer dbHandler.Close()
 	}
 
+	if ih := srv.IngressHandler(); ih != nil {
+		go ih.RunReconciler(10 * time.Second)
+	}
+
 	// Start compose policy reconciler if compose role is enabled
 	if ch := srv.ComposeHandler(); ch != nil {
 		reconciler := ch.Reconciler()

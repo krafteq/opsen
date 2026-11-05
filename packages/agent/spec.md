@@ -73,12 +73,14 @@ Manages Docker Compose project deployments with security hardening and resource 
 
 #### API Endpoints
 
-| Method   | Path                             | Description                      |
-| -------- | -------------------------------- | -------------------------------- |
-| `PUT`    | `/v1/compose/projects/{project}` | Create or replace a project      |
-| `DELETE` | `/v1/compose/projects/{project}` | Destroy a project                |
-| `GET`    | `/v1/compose/projects/{project}` | Get project status               |
-| `GET`    | `/v1/compose/projects`           | List all projects for the client |
+| Method   | Path                                   | Description                             |
+| -------- | -------------------------------------- | --------------------------------------- |
+| `PUT`    | `/v1/compose/projects/{project}`       | Create or replace a project             |
+| `DELETE` | `/v1/compose/projects/{project}`       | Destroy a project                       |
+| `POST`   | `/v1/compose/projects/{project}/stop`  | Stop a project, retaining its resources |
+| `POST`   | `/v1/compose/projects/{project}/start` | Start a stopped project                 |
+| `GET`    | `/v1/compose/projects/{project}`       | Get project status                      |
+| `GET`    | `/v1/compose/projects`                 | List all projects for the client        |
 
 #### Deploy Request (`PUT /v1/compose/projects/my-app`)
 
@@ -132,10 +134,46 @@ The `files` field is a map of `relative path -> content`. The agent looks for a 
 
 Runs `docker compose down --volumes --remove-orphans`, removes the project directory, and removes the project from the resource tracker.
 
+#### Stop and Start
+
+`POST /v1/compose/projects/{project}/stop` runs `docker compose stop` and persists a stopped
+flag. It retains containers, networks, volumes, project files, resource tracking and allocated
+host ports. The stopped project retains its resource budget reservation; stopping does not
+make that allocation available to other projects. Repeated Stop requests are safe. The policy
+reconciler respects the stopped flag, including after agent restart. With a Docker restart policy
+such as `always`, a daemon restart can briefly restart containers before the next reconciliation
+stops them again; the stopped flag does not override Docker restart policies.
+
+`POST /v1/compose/projects/{project}/start` validates the latest saved configuration against
+current policy and resource budgets, then runs Compose `up -d --remove-orphans`. Unchanged
+services retain their containers and IDs; missing services are restored and changed services
+can be recreated. Container filesystem state therefore has the same durability limits as an
+ordinary deployment. Volumes remain available. Repeating Start also restores containers stopped
+or removed externally, even if the saved state already says running.
+
+A stopped deployment update is marked incomplete before any files or allocations change and
+becomes startable only after the update is fully saved. If that PUT fails partway, Start returns
+HTTP 409 without starting containers; retry the PUT successfully before starting. The incomplete
+marker persists across agent restarts. For legacy projects with multiple candidate Compose files
+and no agent-managed canonical configuration, Start returns HTTP 409 rather than guessing which
+file to apply; PUT the desired deployment once before starting.
+
+Both operations return HTTP 200 with the namespaced project name and the persistent flag:
+
+```json
+{ "status": "stopped", "project": "opsen-client-web", "stopped": true }
+```
+
+Start returns `"status": "started"` and `"stopped": false`. Unknown projects return 404.
+A deploy (`PUT`) while stopped updates the saved files and configuration without starting the
+workload; its response includes `stopped: true`. Destroy remains destructive and removes volumes.
+These operations affect only the Compose role. They do not modify ingress on this or another agent.
+
 #### Status
 
 Single project: returns container info (via `docker compose ps --format json`) and tracked resource usage.
 All projects: returns list of projects with per-project resources and aggregated totals.
+Both single-project status and tracked project entries include the persistent `stopped` boolean.
 
 #### Docker Compose Project Naming
 
@@ -229,11 +267,49 @@ Manages reverse proxy configuration files (Traefik or Caddy) via a driver abstra
 
 #### API Endpoints
 
-| Method   | Path                        | Description                       |
-| -------- | --------------------------- | --------------------------------- |
-| `PUT`    | `/v1/ingress/routes`        | Replace all routes for the client |
-| `DELETE` | `/v1/ingress/routes/{name}` | Delete a route                    |
-| `GET`    | `/v1/ingress/routes`        | List routes for the client        |
+| Method   | Path                            | Description                                |
+| -------- | ------------------------------- | ------------------------------------------ |
+| `PUT`    | `/v1/ingress/apps/{app}/routes` | Replace routes for one app                 |
+| `GET`    | `/v1/ingress/apps/{app}/routes` | List routes and stopped state for one app  |
+| `DELETE` | `/v1/ingress/apps/{app}`        | Delete an app's routes                     |
+| `POST`   | `/v1/ingress/apps/{app}/stop`   | Serve a stopped response, retaining routes |
+| `POST`   | `/v1/ingress/apps/{app}/start`  | Restore an app's retained routes           |
+| `PUT`    | `/v1/ingress/routes`            | Replace all routes for the client          |
+| `DELETE` | `/v1/ingress/routes/{name}`     | Delete a route                             |
+| `GET`    | `/v1/ingress/routes`            | List routes for the client                 |
+
+#### App Stop and Start
+
+For the Caddy driver, app Stop preserves the route definitions but replaces proxying with an
+HTTP 503 stopped response at the same hosts, paths and TLS endpoints. It does not connect to
+the workload. The stopped state persists across agent restarts. At startup and every 10 seconds,
+the agent reconciles saved ingress intent with generated configuration and retries proxy reloads
+after failures, including interrupted Stop/Start and deletion operations. Updating routes while stopped
+updates the retained definitions and keeps the stopped response active until Start restores
+proxying. GET app routes includes `stopped`. Repeated actions are safe. If saved route definitions
+are unavailable for an existing app, including routes created before this feature, actions return
+HTTP 409; PUT the app routes once before using Start/Stop. Unknown apps return HTTP 404.
+The Traefik driver currently returns 501 for these actions without mutating route state.
+
+```json
+{ "status": "stopped", "app": "orders-qa", "stopped": true }
+```
+
+Compose and ingress may run on separate agents and have separate persisted states. An orchestrator
+should stop ingress first, then stop workloads; on Start, start workloads, verify readiness, then
+start ingress. These calls are not a cross-agent transaction: retry failed steps explicitly.
+
+TypeScript imperative helpers take a resolved `AgentConnection`, separate from Pulumi resources:
+
+```ts
+import { composeStart, composeStop, ingressStart, ingressStop } from '@opsen/agent'
+
+await ingressStop(ingressConnection, 'orders-qa')
+await composeStop(workloadConnection, 'orders-qa')
+// Later: start workloads, verify application readiness, then restore ingress.
+await composeStart(workloadConnection, 'orders-qa')
+await ingressStart(ingressConnection, 'orders-qa')
+```
 
 #### Route Definition
 
