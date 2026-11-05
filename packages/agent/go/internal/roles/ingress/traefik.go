@@ -65,8 +65,8 @@ func (d *TraefikDriver) DeleteApp(clientName string, app string) error {
 // Both removals are idempotent — missing files are not errors.
 func (d *TraefikDriver) removeConfigs(clientName, app string) error {
 	for _, path := range []string{
-		d.configPath(clientName, app),                            // new: {client}--{app}.yml
-		filepath.Join(d.configDir, clientName+".yml"),            // legacy: {client}.yml
+		d.configPath(clientName, app),                 // new: {client}--{app}.yml
+		filepath.Join(d.configDir, clientName+".yml"), // legacy: {client}.yml
 	} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -221,7 +221,7 @@ func (d *TraefikDriver) buildConfig(clientName string, app string, routes []Rout
 			"rule":        rule,
 			"service":     serviceName,
 			"entryPoints": []string{"websecure"},
-			"middlewares":  routerMiddlewares,
+			"middlewares": routerMiddlewares,
 		}
 
 		if route.TLS != nil && route.TLS.ACME {
@@ -246,7 +246,7 @@ func (d *TraefikDriver) buildConfig(clientName string, app string, routes []Rout
 		"http": map[string]any{
 			"routers":     routers,
 			"services":    services,
-			"middlewares":  middlewares,
+			"middlewares": middlewares,
 		},
 	}
 }

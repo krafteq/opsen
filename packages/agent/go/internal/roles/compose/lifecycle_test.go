@@ -293,3 +293,40 @@ func TestCorruptStateNeverStartsProjects(t *testing.T) {
 		t.Fatalf("corrupt state invoked Docker: %s", got)
 	}
 }
+
+func TestLifecycleCanonicalConfigurationAndStartReassertsRunningState(t *testing.T) {
+	h, dir := testHandler(t)
+	client := minimalClient("tenant")
+	log, _ := recordCompose(t, h)
+	if rr := deployProject(t, h, client, "web", map[string]string{"compose.yml": lifecycleCompose}); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	latest := strings.Replace(lifecycleCompose, "web:", "current:", 1)
+	if rr := deployProject(t, h, client, "web", map[string]string{"docker-compose.yml": latest}); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	selected := findComposeFileOnDisk(filepath.Join(dir, client.Client, "web"))
+	if filepath.Base(selected) != managedComposeFile {
+		t.Fatalf("selected stale file: %s", selected)
+	}
+	if data, err := os.ReadFile(selected); err != nil || !strings.Contains(string(data), "current:") {
+		t.Fatalf("canonical config stale: %s %v", data, err)
+	}
+	os.WriteFile(log, nil, 0644)
+	// A Start must reassert Docker state even if durable intent is already running.
+	if rr := lifecycleRequest(h, client, "web", "start"); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	if got := readCommands(t, log); !strings.Contains(got, "up -d") {
+		t.Fatalf("Start did not reassert running state: %s", got)
+	}
+	// A failed policy revalidation must not stop a previously running workload.
+	client.Compose.Images.AllowedRegistries = []string{"private.example"}
+	os.WriteFile(log, nil, 0644)
+	if rr := lifecycleRequest(h, client, "web", "start"); rr.Code != 400 {
+		t.Fatalf("expected policy rejection: %d %s", rr.Code, rr.Body)
+	}
+	if got := readCommands(t, log); got != "" {
+		t.Fatalf("running workload changed after rejection: %s", got)
+	}
+}

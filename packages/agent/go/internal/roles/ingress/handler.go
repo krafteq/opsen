@@ -14,11 +14,12 @@ import (
 )
 
 type Handler struct {
-	mutationMu  sync.Mutex
-	cfg         *config.AgentConfig
-	clientStore *config.ClientStore
-	logger      *slog.Logger
-	driver      Driver
+	mutationMu    sync.Mutex
+	recoveryDirty bool
+	cfg           *config.AgentConfig
+	clientStore   *config.ClientStore
+	logger        *slog.Logger
+	driver        Driver
 }
 
 func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.Logger) *Handler {
@@ -30,7 +31,9 @@ func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger
 		driver = &TraefikDriver{configDir: cfg.Roles.Ingress.ConfigDir}
 	}
 
-	return &Handler{cfg: cfg, clientStore: clientStore, logger: logger, driver: driver}
+	h := &Handler{cfg: cfg, clientStore: clientStore, logger: logger, driver: driver, recoveryDirty: true}
+	h.Reconcile()
+	return h
 }
 
 type RouteRequest struct {
@@ -105,6 +108,7 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recoveryDirty = true
 	if err := h.driver.Reload(); err != nil {
 		h.logger.Error("failed to reload after app delete", "error", err)
 	}
@@ -139,6 +143,7 @@ func (h *Handler) DeleteRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recoveryDirty = true
 	if err := h.driver.Reload(); err != nil {
 		h.logger.Error("failed to reload after delete", "error", err)
 	}
@@ -197,6 +202,7 @@ func (h *Handler) updateRoutesForApp(w http.ResponseWriter, r *http.Request, app
 	}
 
 	// Reload if needed
+	h.recoveryDirty = true
 	if err := h.driver.Reload(); err != nil {
 		h.logger.Error("failed to reload ingress", "client", client.Client, "app", app, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reload ingress"})
@@ -230,6 +236,10 @@ func (h *Handler) listRoutesForApp(w http.ResponseWriter, r *http.Request, app s
 	stopped := false
 	if d, ok := h.driver.(*CaddyDriver); ok {
 		if state, err := d.readState(client.Client, app); err == nil {
+			if state.Deleted {
+				writeJSON(w, 404, map[string]string{"error": "no ingress app found"})
+				return
+			}
 			stopped = state.Stopped
 		} else if !os.IsNotExist(err) {
 			writeJSON(w, 500, map[string]string{"error": "failed to read ingress state"})
@@ -381,6 +391,10 @@ func (h *Handler) setStopped(w http.ResponseWriter, r *http.Request, stopped boo
 		writeJSON(w, status, map[string]string{"error": "route definitions unavailable; PUT app routes before start/stop"})
 		return
 	}
+	if state.Deleted {
+		writeJSON(w, 404, map[string]string{"error": "no ingress app found"})
+		return
+	}
 	if violations := h.validateRoutes(state.Routes, client.Ingress, client.Client, app); !stopped && len(violations) > 0 {
 		writeJSON(w, 400, map[string]any{"error": "policy violations", "violations": violations})
 		return
@@ -397,6 +411,7 @@ func (h *Handler) setStopped(w http.ResponseWriter, r *http.Request, stopped boo
 		writeJSON(w, 500, map[string]string{"error": "failed to persist ingress state"})
 		return
 	}
+	h.recoveryDirty = true
 	if err = driver.Reload(); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "failed to reload ingress; retry operation"})
 		return

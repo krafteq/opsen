@@ -109,3 +109,63 @@ volumes:
 		t.Fatalf("source permissions %v %v", info, err)
 	}
 }
+
+func TestE2E_StopAfterComposeFilenameAndServiceChange(t *testing.T) {
+	requireDocker(t)
+	h, _ := testHandler(t)
+	h.cfg.Roles.Compose.ComposeBinary = "docker compose"
+	h.cfg.GlobalHardening = config.GlobalHardening{}
+	client := minimalClient("filename-e2e")
+	slug := fmt.Sprintf("test-%d", time.Now().UnixNano())
+	name := func(service string) string { return "opsen-" + client.Client + "-" + slug + "-" + service + "-1" }
+	content := func(service string) string {
+		return fmt.Sprintf("services:\n  %s:\n    image: busybox:latest\n    command: sleep 3600\n    stop_grace_period: 1s\n", service)
+	}
+	t.Cleanup(func() {
+		rr := destroyProject(t, h, client, slug)
+		if rr.Code != 200 {
+			t.Logf("cleanup %d %s", rr.Code, rr.Body)
+		}
+	})
+	if rr := deployProject(t, h, client, slug, map[string]string{"compose.yml": content("old")}); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	if rr := deployProject(t, h, client, slug, map[string]string{"docker-compose.yml": content("current")}); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	// A leftover caller filename is no longer authoritative and may be invalid.
+	if err := os.WriteFile(filepath.Join(h.cfg.Roles.Compose.DeploymentsDir, client.Client, slug, "compose.yml"), []byte("invalid: ["), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if rr := lifecycleRequest(h, client, slug, "stop"); rr.Code != 200 {
+		t.Fatalf("stop renamed file: %d %s", rr.Code, rr.Body)
+	}
+	if got := strings.TrimSpace(dockerOutput(t, "inspect", "-f", "{{.State.Running}}", name("current"))); got != "false" {
+		t.Fatal("Stop left current service running")
+	}
+	// Rename both the file and service again while stopped. Start must apply latest.
+	if rr := deployProject(t, h, client, slug, map[string]string{"compose.yaml": content("latest")}); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	if rr := lifecycleRequest(h, client, slug, "start"); rr.Code != 200 {
+		t.Fatalf("start renamed staged file: %d %s", rr.Code, rr.Body)
+	}
+	if got := strings.TrimSpace(dockerOutput(t, "inspect", "-f", "{{.State.Running}}", name("latest"))); got != "true" {
+		t.Fatal("latest service missing")
+	}
+	// Self-heal Docker drift even when persisted state is already running.
+	dockerOutput(t, "stop", "-t", "1", name("latest"))
+	if rr := lifecycleRequest(h, client, slug, "start"); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	if got := strings.TrimSpace(dockerOutput(t, "inspect", "-f", "{{.State.Running}}", name("latest"))); got != "true" {
+		t.Fatal("Start did not restore externally stopped container")
+	}
+	dockerOutput(t, "rm", "-f", name("latest"))
+	if rr := lifecycleRequest(h, client, slug, "start"); rr.Code != 200 {
+		t.Fatal(rr.Body)
+	}
+	if got := strings.TrimSpace(dockerOutput(t, "inspect", "-f", "{{.State.Running}}", name("latest"))); got != "true" {
+		t.Fatal("Start did not restore externally removed container")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -56,6 +57,7 @@ func (d *CaddyDriver) WriteConfig(clientName string, app string, routes []Route)
 		return err
 	}
 	state.Routes = routes
+	state.Deleted = false
 	return d.writeStateConfig(clientName, app, state)
 }
 func (d *CaddyDriver) renderConfig(clientName string, app string, routes []Route, stopped bool) error {
@@ -82,7 +84,13 @@ func (d *CaddyDriver) renderConfig(clientName string, app string, routes []Route
 			lines = append(lines, "  }")
 
 			// Custom headers
-			for k, v := range route.Headers {
+			keys := make([]string, 0, len(route.Headers))
+			for k := range route.Headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				v := route.Headers[k]
 				lines = append(lines, fmt.Sprintf("  header %s \"%s\"", k, v))
 			}
 
@@ -121,7 +129,11 @@ func (d *CaddyDriver) renderConfig(clientName string, app string, routes []Route
 		}
 	}
 
-	return atomicIngressWrite(d.configPath(clientName, app), []byte(strings.Join(lines, "\n")), 0644)
+	data := []byte(strings.Join(lines, "\n"))
+	if existing, err := os.ReadFile(d.configPath(clientName, app)); err == nil && string(existing) == string(data) {
+		return nil
+	}
+	return atomicIngressWrite(d.configPath(clientName, app), data, 0644)
 }
 
 func (d *CaddyDriver) DeleteRoute(clientName string, app string, routeName string) error {
@@ -135,8 +147,18 @@ func (d *CaddyDriver) DeleteApp(clientName string, app string) error {
 // removeConfigs removes the app-scoped config file and any legacy (pre-app-scoping) config file.
 // Both removals are idempotent — missing files are not errors.
 func (d *CaddyDriver) removeConfigs(clientName, app string) error {
+	state := appIngressState{Deleted: true, Client: clientName, App: app}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if err = atomicIngressWrite(d.statePath(clientName, app), data, 0600); err != nil {
+		return err
+	}
+	return d.removeConfigFiles(clientName, app)
+}
+func (d *CaddyDriver) removeConfigFiles(clientName, app string) error {
 	for _, path := range []string{
-		d.statePath(clientName, app),
 		d.configPath(clientName, app),                  // new: {client}--{app}.conf
 		filepath.Join(d.configDir, clientName+".conf"), // legacy: {client}.conf
 	} {
@@ -214,8 +236,11 @@ func (d *CaddyDriver) Reload() error {
 // Persist desired routes before rendering: failed reloads are retried safely,
 // and a restarted agent retains the requested stopped state.
 type appIngressState struct {
+	Client  string  `json:"client"`
+	App     string  `json:"app"`
 	Routes  []Route `json:"routes"`
 	Stopped bool    `json:"stopped"`
+	Deleted bool    `json:"deleted,omitempty"`
 }
 
 func (d *CaddyDriver) statePath(clientName, app string) string {
@@ -252,6 +277,8 @@ func atomicIngressWrite(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(f.Name(), path)
 }
 func (d *CaddyDriver) writeStateConfig(clientName, app string, state appIngressState) error {
+	state.Client = clientName
+	state.App = app
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err

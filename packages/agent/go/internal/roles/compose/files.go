@@ -48,7 +48,7 @@ const (
 // projectFileModeFor returns the mode a project file with the given base name is
 // written with. It mirrors the compose-file detection Deploy uses for content.
 func projectFileModeFor(name string) os.FileMode {
-	if isComposeFile(name) || name == sourceComposeFile || name == stoppedComposeFile {
+	if isComposeFile(name) || isManagedProjectFile(name) {
 		return composeFileMode
 	}
 	return projectFileMode

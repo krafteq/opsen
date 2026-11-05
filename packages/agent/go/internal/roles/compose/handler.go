@@ -196,11 +196,24 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Preserve the last known service set before request files can overwrite it.
+	// This also seeds lifecycle snapshots for projects deployed by older agents.
+	if existing != nil && !stopped {
+		active := filepath.Join(projectDir, activeComposeFile)
+		if _, err := os.Stat(active); os.IsNotExist(err) {
+			if current := findComposeFileOnDisk(projectDir); current != "" {
+				if err := copyComposeFile(current, active); err != nil {
+					writeJSON(w, 500, map[string]string{"error": "failed to retain active configuration"})
+					return
+				}
+			}
+		}
+	}
 	// Write each file from the request
 	var composeFilePath string
 	for relPath, content := range req.Files {
 		cleanPath := filepath.Clean(relPath)
-		if cleanPath == sourceComposeFile || cleanPath == stoppedComposeFile {
+		if isManagedProjectFile(cleanPath) {
 			writeJSON(w, 400, map[string]string{"error": "reserved file path"})
 			return
 		}
@@ -240,6 +253,18 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Always execute one canonical path, regardless of the caller's filename.
+	// Otherwise a renamed request can leave an older compose.yml shadowing it.
+	composeFilePath = filepath.Join(projectDir, managedComposeFile)
+	transformed, err := marshalCompose(composeFile)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "failed to serialize compose file"})
+		return
+	}
+	if err := writeProjectFile(composeFilePath, transformed, composeFileMode); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "failed to write canonical compose file"})
+		return
+	}
 	// Retain the original compose input so Start revalidates current policy,
 	// rather than trusting an already hardened file from an older policy.
 	if err := writeProjectFile(filepath.Join(projectDir, sourceComposeFile), []byte(composeContent), 0600); err != nil {
@@ -252,6 +277,10 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			h.logger.Error("compose up failed", "client", client.Client, "project", projectSlug, "error", err)
 			writeJSON(w, 500, map[string]string{"error": fmt.Sprintf("deploy failed: %v", err)})
+			return
+		}
+		if err := copyComposeFile(composeFilePath, filepath.Join(projectDir, activeComposeFile)); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to persist active configuration"})
 			return
 		}
 		removeLegacyClientNetwork(h.cfg.Roles.Compose.ComposeBinary, client.Client, h.logger)
@@ -534,7 +563,7 @@ func isComposeFile(path string) bool {
 }
 
 func findComposeFileOnDisk(projectDir string) string {
-	for _, name := range []string{"compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
+	for _, name := range []string{managedComposeFile, "compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
 		path := filepath.Join(projectDir, name)
 		if _, err := os.Stat(path); err == nil {
 			return path

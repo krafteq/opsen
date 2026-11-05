@@ -23,6 +23,7 @@ type Server struct {
 	logger         *slog.Logger
 	dbHandler      *dbRole.Handler
 	composeHandler *compose.Handler
+	ingressHandler *ingress.Handler
 }
 
 func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.Logger, version string) (*Server, error) {
@@ -67,8 +68,10 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 	}
 
 	// Ingress role
+	var ingressHandler *ingress.Handler
 	if cfg.Roles.Ingress != nil {
 		ih := ingress.NewHandler(cfg, clientStore, logger)
+		ingressHandler = ih
 
 		// App-scoped endpoints
 		mux.HandleFunc("PUT /v1/ingress/apps/{app}/routes", withClient(clientStore, logger, ih.UpdateAppRoutes))
@@ -116,6 +119,7 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 	}
 
 	return &Server{
+		ingressHandler: ingressHandler,
 		httpServer:     httpServer,
 		cfg:            cfg,
 		clientStore:    clientStore,
@@ -144,3 +148,5 @@ func (s *Server) Shutdown() {
 	defer cancel()
 	s.httpServer.Shutdown(ctx)
 }
+
+func (s *Server) IngressHandler() *ingress.Handler { return s.ingressHandler }

@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"github.com/opsen/agent/internal/config"
 	"github.com/opsen/agent/internal/identity"
 )
+
+const managedComposeFile = ".opsen-compose.yml"
+const activeComposeFile = ".opsen-active-compose.yml"
 
 const sourceComposeFile = ".opsen-source-compose.yml"
 const stoppedComposeFile = ".opsen-stopped-compose.yml"
@@ -72,9 +76,20 @@ func (h *Handler) lifecycle(w http.ResponseWriter, r *http.Request, stop bool) {
 			return
 		}
 	} else {
-		if !resources.Stopped {
-			writeJSON(w, 200, LifecycleResponse{Status: "started", Project: project})
-			return
+		wasStopped := resources.Stopped
+		// Older agents did not retain which filename was last deployed. Refuse
+		// to guess when multiple legacy files remain; a new PUT canonicalizes it.
+		if filepath.Base(composePath) != managedComposeFile {
+			legacyFiles := 0
+			for _, name := range []string{"compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
+				if _, err := os.Stat(filepath.Join(projectDir, name)); err == nil {
+					legacyFiles++
+				}
+			}
+			if legacyFiles > 1 {
+				writeJSON(w, 409, map[string]string{"error": "ambiguous legacy compose files; PUT the deployment before starting"})
+				return
+			}
 		}
 		if resources.PendingInvalid {
 			writeJSON(w, 409, map[string]string{"error": "last deferred deployment failed; redeploy successfully before starting"})
@@ -99,15 +114,29 @@ func (h *Handler) lifecycle(w http.ResponseWriter, r *http.Request, stop bool) {
 		if err != nil {
 			// Partial start must not leave a project running while its durable state
 			// still says stopped. Best effort stop; report both failures if necessary.
-			stopErr := composeStopProject(h.cfg.Roles.Compose.ComposeBinary, project, composePath)
+			var stopErr error
+			if wasStopped {
+				stopErr = composeStopProject(h.cfg.Roles.Compose.ComposeBinary, project, composePath)
+			}
 			writeJSON(w, 500, map[string]string{"error": fmt.Sprintf("start failed: %v; rollback stop: %v", err, stopErr)})
+			return
+		}
+		if err := copyComposeFile(composePath, filepath.Join(projectDir, activeComposeFile)); err != nil {
+			var stopErr error
+			if wasStopped {
+				stopErr = composeStopProject(h.cfg.Roles.Compose.ComposeBinary, project, composePath)
+			}
+			writeJSON(w, 500, map[string]string{"error": fmt.Sprintf("failed to persist active configuration: %v; rollback stop: %v", err, stopErr)})
 			return
 		}
 		resources.Stopped = false
 		resources.PendingApply = false
 		resources.PolicyHash = currentHash
 		if err := h.tracker.Set(client.Client, slug, resources); err != nil {
-			stopErr := composeStopProject(h.cfg.Roles.Compose.ComposeBinary, project, composePath)
+			var stopErr error
+			if wasStopped {
+				stopErr = composeStopProject(h.cfg.Roles.Compose.ComposeBinary, project, composePath)
+			}
 			writeJSON(w, 500, map[string]string{"error": fmt.Sprintf("failed to persist started state: %v; rollback stop: %v", err, stopErr)})
 			return
 		}
@@ -179,14 +208,49 @@ func composeAction(binary, project, composePath, action string) error {
 	return nil
 }
 
-// Keep the active service set while deployments are staged in stopped state.
-// Otherwise a renamed/removed service could escape a retry after daemon reboot.
+// Stop every retained service set, including the last applied configuration.
+// A failed deploy can have overwritten a compose file without replacing its
+// running services. Never let one invalid stale file prevent other stop attempts.
 func composeStopProject(binary, project, composePath string) error {
-	snapshot := filepath.Join(filepath.Dir(composePath), stoppedComposeFile)
-	if _, err := os.Stat(snapshot); err == nil {
-		if err := composeAction(binary, project, snapshot, "stop"); err != nil {
-			return err
+	dir := filepath.Dir(composePath)
+	paths := []string{filepath.Join(dir, activeComposeFile), filepath.Join(dir, stoppedComposeFile), composePath}
+	_, activeErr := os.Stat(filepath.Join(dir, activeComposeFile))
+	_, canonicalErr := os.Stat(filepath.Join(dir, managedComposeFile))
+	if os.IsNotExist(activeErr) && os.IsNotExist(canonicalErr) {
+		// Pre-upgrade projects have no authoritative applied snapshot. Consider
+		// all possible old service sets rather than silently stopping the wrong one.
+		for _, name := range []string{"compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
+			paths = append(paths, filepath.Join(dir, name))
 		}
 	}
-	return composeAction(binary, project, composePath, "stop")
+	seen := map[string]bool{}
+	var failures []error
+	for _, path := range paths {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		if _, err := os.Stat(path); err != nil {
+			if !os.IsNotExist(err) {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		if err := composeAction(binary, project, path, "stop"); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func copyComposeFile(from, to string) error {
+	data, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	return writeProjectFile(to, data, composeFileMode)
+}
+
+func isManagedProjectFile(name string) bool {
+	return name == sourceComposeFile || name == stoppedComposeFile || name == managedComposeFile || name == activeComposeFile
 }

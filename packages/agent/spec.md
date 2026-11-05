@@ -148,12 +148,15 @@ stops them again; the stopped flag does not override Docker restart policies.
 current policy and resource budgets, then runs Compose `up -d --remove-orphans`. Unchanged
 services retain their containers and IDs; missing services are restored and changed services
 can be recreated. Container filesystem state therefore has the same durability limits as an
-ordinary deployment. Volumes remain available.
+ordinary deployment. Volumes remain available. Repeating Start also restores containers stopped
+or removed externally, even if the saved state already says running.
 
 A stopped deployment update is marked incomplete before any files or allocations change and
 becomes startable only after the update is fully saved. If that PUT fails partway, Start returns
 HTTP 409 without starting containers; retry the PUT successfully before starting. The incomplete
-marker persists across agent restarts.
+marker persists across agent restarts. For legacy projects with multiple candidate Compose files
+and no agent-managed canonical configuration, Start returns HTTP 409 rather than guessing which
+file to apply; PUT the desired deployment once before starting.
 
 Both operations return HTTP 200 with the namespaced project name and the persistent flag:
 
@@ -279,7 +282,9 @@ Manages reverse proxy configuration files (Traefik or Caddy) via a driver abstra
 
 For the Caddy driver, app Stop preserves the route definitions but replaces proxying with an
 HTTP 503 stopped response at the same hosts, paths and TLS endpoints. It does not connect to
-the workload. The stopped state persists across agent restarts. Updating routes while stopped
+the workload. The stopped state persists across agent restarts. At startup and every 10 seconds,
+the agent reconciles saved ingress intent with generated configuration and retries proxy reloads
+after failures, including interrupted Stop/Start and deletion operations. Updating routes while stopped
 updates the retained definitions and keeps the stopped response active until Start restores
 proxying. GET app routes includes `stopped`. Repeated actions are safe. If saved route definitions
 are unavailable for an existing app, including routes created before this feature, actions return
