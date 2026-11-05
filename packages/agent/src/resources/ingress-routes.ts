@@ -31,6 +31,8 @@ interface IngressRoutesInputs {
 /** Response from the agent's ingress route update endpoint. */
 export interface IngressUpdateResult {
   status: string
+  /** Explicit stopped state; route updates preserve it. */
+  stopped?: boolean
   app: string
   routes: number
   policy_modifications: string[]

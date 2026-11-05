@@ -36,6 +36,9 @@ func (r *Reconciler) Run(interval time.Duration) {
 }
 
 func (r *Reconciler) reconcile() {
+	if r.tracker.loadErr != nil {
+		return
+	}
 	r.tracker.mu.RLock()
 	clientNames := make([]string, 0, len(r.tracker.Clients))
 	for name := range r.tracker.Clients {
@@ -60,7 +63,7 @@ func (r *Reconciler) reconcile() {
 		// Collect projects needing redeploy
 		var stale []string
 		for projectSlug, res := range clientRes.Projects {
-			if res.PolicyHash != currentHash {
+			if res.PolicyHash != currentHash || res.Stopped {
 				stale = append(stale, projectSlug)
 			}
 		}
@@ -73,6 +76,12 @@ func (r *Reconciler) reconcile() {
 }
 
 func (r *Reconciler) redeployProject(clientName string, client *config.ClientPolicy, projectSlug, newHash string) {
+	unlock := r.tracker.lockClient(clientName)
+	defer unlock()
+	resources := r.tracker.GetProject(clientName, projectSlug)
+	if resources == nil || (!resources.Stopped && resources.PolicyHash == newHash) {
+		return
+	}
 	projectDir := filepath.Join(r.cfg.Roles.Compose.DeploymentsDir, clientName, projectSlug)
 	composePath := findComposeFileOnDisk(projectDir)
 	if composePath == "" {
@@ -80,6 +89,14 @@ func (r *Reconciler) redeployProject(clientName string, client *config.ClientPol
 		return
 	}
 
+	if resources.Stopped {
+		// Retry failed stops and enforce intent after Docker/agent restarts.
+		project := fmt.Sprintf("opsen-%s-%s", clientName, projectSlug)
+		if err := composeStopProject(r.cfg.Roles.Compose.ComposeBinary, project, composePath); err != nil {
+			r.logger.Error("reconcile: stop failed", "client", clientName, "project", projectSlug, "error", err)
+		}
+		return
+	}
 	data, err := os.ReadFile(composePath)
 	if err != nil {
 		r.logger.Error("reconcile: failed to read compose file", "client", clientName, "project", projectSlug, "error", err)

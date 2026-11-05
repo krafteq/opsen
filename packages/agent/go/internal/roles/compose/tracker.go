@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,12 +14,15 @@ import (
 
 // ProjectResources tracks resource usage for a single compose project.
 type ProjectResources struct {
-	Containers int     `json:"containers"`
-	MemoryMb   int     `json:"memory_mb"`
-	Cpus       float64 `json:"cpus"`
-	PolicyHash string  `json:"policy_hash,omitempty"` // hash of policy fields affecting deployment
-	CreatedAt  string  `json:"created_at"`
-	ModifiedAt string  `json:"modified_at"`
+	Stopped        bool    `json:"stopped"`
+	PendingInvalid bool    `json:"pending_invalid,omitempty"`
+	PendingApply   bool    `json:"pending_apply,omitempty"`
+	Containers     int     `json:"containers"`
+	MemoryMb       int     `json:"memory_mb"`
+	Cpus           float64 `json:"cpus"`
+	PolicyHash     string  `json:"policy_hash,omitempty"` // hash of policy fields affecting deployment
+	CreatedAt      string  `json:"created_at"`
+	ModifiedAt     string  `json:"modified_at"`
 }
 
 // TotalResources is the aggregated usage across all projects for a client.
@@ -46,10 +50,12 @@ func (c *ClientResources) Total() TotalResources {
 
 // ResourceTracker persists resource usage across agent restarts.
 type ResourceTracker struct {
-	mu      sync.RWMutex
-	path    string
-	Clients map[string]*ClientResources `json:"clients"`
-	logger  *slog.Logger
+	operations sync.Map
+	loadErr    error
+	mu         sync.RWMutex
+	path       string
+	Clients    map[string]*ClientResources `json:"clients"`
+	logger     *slog.Logger
 }
 
 func LoadResourceTracker(path string, logger *slog.Logger) (*ResourceTracker, error) {
@@ -74,15 +80,48 @@ func LoadResourceTracker(path string, logger *slog.Logger) (*ResourceTracker, er
 	return tracker, nil
 }
 
-func (t *ResourceTracker) save() {
+// lockClient serializes project operations with policy reconciliation. A client
+// lock also makes budget checks and reservations atomic across its projects.
+func (t *ResourceTracker) lockClient(client string) func() {
+	value, _ := t.operations.LoadOrStore(client, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+func (t *ResourceTracker) save() (err error) {
+	defer func() {
+		if err != nil && t.logger != nil {
+			t.logger.Error("failed to persist resource state", "error", err)
+		}
+	}()
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
-		t.logger.Error("failed to serialize resource state", "error", err)
-		return
+		return err
 	}
-	if err := os.WriteFile(t.path, data, 0640); err != nil {
-		t.logger.Error("failed to write resource state", "error", err)
+	file, err := os.CreateTemp(filepath.Dir(t.path), ".resource-state-*")
+	if err != nil {
+		return err
 	}
+	name := file.Name()
+	defer os.Remove(name)
+	if err = file.Chmod(0640); err == nil {
+		_, err = file.Write(data)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err = os.Rename(name, t.path); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CheckBudget verifies that deploying a new project (or updating an existing one)
@@ -129,7 +168,7 @@ func (t *ResourceTracker) CheckBudget(clientName, projectName string, policy *co
 }
 
 // Set records resource usage for a project, replacing any previous record.
-func (t *ResourceTracker) Set(clientName, projectName string, resources *ProjectResources) {
+func (t *ResourceTracker) Set(clientName, projectName string, resources *ProjectResources) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -145,8 +184,17 @@ func (t *ResourceTracker) Set(clientName, projectName string, resources *Project
 		resources.CreatedAt = now
 	}
 	resources.ModifiedAt = now
+	previous := client.Projects[projectName]
 	client.Projects[projectName] = resources
-	t.save()
+	if err := t.save(); err != nil {
+		if previous == nil {
+			delete(client.Projects, projectName)
+		} else {
+			client.Projects[projectName] = previous
+		}
+		return err
+	}
+	return nil
 }
 
 // Remove deletes the resource record for a project.
@@ -174,14 +222,28 @@ func (t *ResourceTracker) GetProject(clientName, projectName string) *ProjectRes
 	if client == nil {
 		return nil
 	}
-	return client.Projects[projectName]
+	res := client.Projects[projectName]
+	if res == nil {
+		return nil
+	}
+	copy := *res
+	return &copy
 }
 
 // GetClient returns all resource info for a client.
 func (t *ResourceTracker) GetClient(clientName string) *ClientResources {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.Clients[clientName]
+	client := t.Clients[clientName]
+	if client == nil {
+		return nil
+	}
+	copy := &ClientResources{Projects: make(map[string]*ProjectResources)}
+	for name, res := range client.Projects {
+		value := *res
+		copy.Projects[name] = &value
+	}
+	return copy
 }
 
 // calculateResources computes the resources a compose file will consume.

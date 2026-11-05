@@ -42,3 +42,7 @@ export { Database } from './resources/database'
 export type { DatabaseArgs, DatabaseCreateResult } from './resources/database'
 export { DatabaseRole } from './resources/database-role'
 export type { DatabaseRoleArgs, DatabaseRoleCreateResult } from './resources/database-role'
+
+// Imperative runtime lifecycle operations (independent of Pulumi desired resources).
+export { composeStop, composeStart, ingressStop, ingressStart } from './lifecycle'
+export type { ComposeLifecycleResult, IngressLifecycleResult } from './lifecycle'

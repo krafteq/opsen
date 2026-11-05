@@ -51,7 +51,7 @@ func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger
 	tracker, err := LoadResourceTracker(trackerPath, logger)
 	if err != nil {
 		logger.Warn("failed to load resource tracker, starting fresh", "error", err)
-		tracker = &ResourceTracker{path: trackerPath, Clients: make(map[string]*ClientResources), logger: logger}
+		tracker = &ResourceTracker{path: trackerPath, Clients: make(map[string]*ClientResources), logger: logger, loadErr: err}
 	}
 
 	var ports *PortAllocator
@@ -81,6 +81,7 @@ type DeployRequest struct {
 }
 
 type DeployResponse struct {
+	Stopped  bool                      `json:"stopped"`
 	Status   string                    `json:"status"`
 	Project  string                    `json:"project"`
 	Services []string                  `json:"services,omitempty"`
@@ -100,6 +101,14 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	unlock := h.tracker.lockClient(client.Client)
+	defer unlock()
+	if h.tracker.loadErr != nil {
+		writeJSON(w, 500, map[string]string{"error": "resource state unavailable"})
+		return
+	}
+	existing := h.tracker.GetProject(client.Client, projectSlug)
+	stopped := existing != nil && existing.Stopped
 	var req DeployRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -145,6 +154,16 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Mark a deferred update before writing files; a failed write must still
+	// force Start through compose up rather than starting stale containers.
+	if stopped {
+		existing.PendingApply = true
+		existing.PendingInvalid = true
+		if err := h.tracker.Set(client.Client, projectSlug, existing); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to persist pending deployment"})
+			return
+		}
+	}
 	// Allocate host ports for exposed container ports
 	var portMappings []PortMapping
 	exposeRequests := extractExposeEntries(composeFile)
@@ -181,6 +200,10 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	var composeFilePath string
 	for relPath, content := range req.Files {
 		cleanPath := filepath.Clean(relPath)
+		if cleanPath == sourceComposeFile || cleanPath == stoppedComposeFile {
+			writeJSON(w, 400, map[string]string{"error": "reserved file path"})
+			return
+		}
 		if strings.HasPrefix(cleanPath, "..") || filepath.IsAbs(cleanPath) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid file path: %s", relPath)})
 			return
@@ -217,19 +240,29 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run docker compose up
-	services, err := h.composeUp(projectName, composeFilePath)
-	if err != nil {
-		h.logger.Error("compose up failed", "client", client.Client, "project", projectSlug, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("deploy failed: %v", err)})
+	// Retain the original compose input so Start revalidates current policy,
+	// rather than trusting an already hardened file from an older policy.
+	if err := writeProjectFile(filepath.Join(projectDir, sourceComposeFile), []byte(composeContent), 0600); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "failed to retain compose input"})
 		return
 	}
-
-	removeLegacyClientNetwork(h.cfg.Roles.Compose.ComposeBinary, client.Client, h.logger)
-
-	// Track resources with current policy hash
+	var services []string
+	if !stopped {
+		services, err = h.composeUp(projectName, composeFilePath)
+		if err != nil {
+			h.logger.Error("compose up failed", "client", client.Client, "project", projectSlug, "error", err)
+			writeJSON(w, 500, map[string]string{"error": fmt.Sprintf("deploy failed: %v", err)})
+			return
+		}
+		removeLegacyClientNetwork(h.cfg.Roles.Compose.ComposeBinary, client.Client, h.logger)
+	}
 	requestedResources.PolicyHash = policyHash(client, h.cfg)
-	h.tracker.Set(client.Client, projectSlug, requestedResources)
+	requestedResources.Stopped = stopped
+	requestedResources.PendingApply = stopped
+	if err := h.tracker.Set(client.Client, projectSlug, requestedResources); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "failed to persist resource state"})
+		return
+	}
 
 	// Build port mapping response: service -> container_port -> host_port
 	var portsResponse map[string]map[string]int
@@ -244,8 +277,13 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.Info("deployed", "client", client.Client, "project", projectSlug, "services", services)
+	status := "deployed"
+	if stopped {
+		status = "stopped"
+	}
 	writeJSON(w, http.StatusOK, DeployResponse{
-		Status:   "deployed",
+		Stopped:  stopped,
+		Status:   status,
 		Project:  projectName,
 		Services: services,
 		Modified: modifications,
@@ -260,6 +298,16 @@ func (h *Handler) Destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if client.Compose == nil {
+		writeJSON(w, 403, map[string]string{"error": "compose role not allowed for this client"})
+		return
+	}
+	unlock := h.tracker.lockClient(client.Client)
+	defer unlock()
+	if h.tracker.loadErr != nil {
+		writeJSON(w, 500, map[string]string{"error": "resource state unavailable"})
+		return
+	}
 	projectName := fmt.Sprintf("opsen-%s-%s", client.Client, projectSlug)
 	projectDir := filepath.Join(h.cfg.Roles.Compose.DeploymentsDir, client.Client, projectSlug)
 	composePath := findComposeFileOnDisk(projectDir)
@@ -313,12 +361,17 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resources := h.tracker.GetProject(client.Client, projectSlug)
+	stopped := resources != nil && resources.Stopped
+	if stopped {
+		status = "stopped"
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"project":    projectName,
 		"status":     status,
 		"containers": containers,
 		"resources":  resources,
+		"stopped":    stopped,
 	})
 }
 

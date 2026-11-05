@@ -41,6 +41,8 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 		composeHandler = compose.NewHandler(cfg, clientStore, logger)
 		mux.HandleFunc("PUT /v1/compose/projects/{project}", withClient(clientStore, logger, composeHandler.Deploy))
 		mux.HandleFunc("DELETE /v1/compose/projects/{project}", withClient(clientStore, logger, composeHandler.Destroy))
+		mux.HandleFunc("POST /v1/compose/projects/{project}/stop", withClient(clientStore, logger, composeHandler.Stop))
+		mux.HandleFunc("POST /v1/compose/projects/{project}/start", withClient(clientStore, logger, composeHandler.Start))
 		mux.HandleFunc("GET /v1/compose/projects/{project}", withClient(clientStore, logger, composeHandler.Status))
 		mux.HandleFunc("GET /v1/compose/projects", withClient(clientStore, logger, composeHandler.Status))
 		logger.Info("compose role enabled")
@@ -72,6 +74,8 @@ func New(cfg *config.AgentConfig, clientStore *config.ClientStore, logger *slog.
 		mux.HandleFunc("PUT /v1/ingress/apps/{app}/routes", withClient(clientStore, logger, ih.UpdateAppRoutes))
 		mux.HandleFunc("GET /v1/ingress/apps/{app}/routes", withClient(clientStore, logger, ih.ListAppRoutes))
 		mux.HandleFunc("DELETE /v1/ingress/apps/{app}", withClient(clientStore, logger, ih.DeleteApp))
+		mux.HandleFunc("POST /v1/ingress/apps/{app}/stop", withClient(clientStore, logger, ih.StopApp))
+		mux.HandleFunc("POST /v1/ingress/apps/{app}/start", withClient(clientStore, logger, ih.StartApp))
 
 		// Legacy endpoints (backwards compat, use _default app)
 		mux.HandleFunc("PUT /v1/ingress/routes", withClient(clientStore, logger, ih.UpdateRoutes))
