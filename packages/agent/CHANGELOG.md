@@ -1,5 +1,11 @@
 # @opsen/agent
 
+## 0.9.0
+
+### Minor Changes
+
+- 48bb8e7: Add persistent Compose project start/stop operations and ingress app start/stop operations with a stopped HTTP 503 response. Preserve Compose resources and ingress route definitions while stopped, and expose TypeScript lifecycle helpers for orchestration across separate workload and ingress agents.
+
 ## 0.8.2
 
 ### Patch Changes
