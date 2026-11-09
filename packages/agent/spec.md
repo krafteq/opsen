@@ -1311,3 +1311,68 @@ TypeScript config objects (camelCase) are serialized to YAML (snake_case) for th
 - `@pulumi/pulumi` — Core Pulumi SDK
 - `@pulumi/command` — Local/remote command execution and file copy
 - `@pulumi/tls` — PKI certificate management
+
+## Temporary PostgreSQL access roles
+
+Controllers may provision access leases without placing their passwords in Pulumi
+state. Query authenticated `GET /v1/db/capabilities` first and require
+`{"capabilities":["temporary-access-roles-v1"]}`. Old agents must be upgraded; do
+not fall back to the legacy additional-role API.
+
+Use `PUT /v1/db/databases/{name}/access-roles/{role}` with:
+
+```json
+{
+  "password": "a-fresh-random-password-at-least-16-characters",
+  "access_mode": "read",
+  "expires_at": "2099-01-01T00:00:00Z",
+  "schemas": ["public"]
+}
+```
+
+`read` grants SELECT; `readwrite` grants SELECT/INSERT/UPDATE/DELETE and sequence
+USAGE/SELECT. Neither grants schema creation, ownership, TRUNCATE, role management
+or RLS bypass. Schemas must exist and belong to the database owner (including the
+PostgreSQL 15+ `pg_database_owner` owner of public). Future tables/sequences created
+by that owner in the selected schemas receive matching default privileges. Tables
+created by other roles, new schemas, and later privilege changes are outside this
+contract. Existing PUBLIC grants that defeat schema/data restrictions or allow
+connection to another application database cause provisioning to fail. Executable
+application SECURITY DEFINER routines also cause refusal. The cluster's `postgres`
+maintenance database is exempt from the cross-database CONNECT check: operators
+must not store application data or expose privileged functions there. PostgreSQL
+catalog visibility and PUBLIC access remain cluster-wide concerns; changing PUBLIC
+permissions after issuance can widen access and must remain operator-controlled.
+
+Each role name identifies one immutable request. Identical PUT retries succeed;
+changed password/mode/schemas/deadline or reuse after revocation returns 409. The
+agent persists a request fingerprint and random role ownership marker, never the
+password. SQL provisioning is transactional. An interrupted request can be retried
+or explicitly revoked; ownership collisions are never adopted. State-file writes
+are atomic and provisioning refuses to proceed if reservation cannot be persisted.
+A corrupt state file prevents agent startup rather than forgetting ownership.
+
+GET on the same path returns `role`, `access_mode`, `schemas`, `expires_at` and
+`status` (`provisioning`, `active`, `revoking`, `revoked`). It never returns the
+password, fingerprint or ownership marker. `active` means provisioning committed;
+it does not imply that the password deadline has not passed. Unknown roles return
+404, and another client's database is never accessible.
+
+DELETE first persists revocation, disables LOGIN and clears the password, then
+terminates and waits for existing sessions, removes grants and drops the role.
+Failure returns 500 and remains retryable; it is never reported as revoked until
+cleanup succeeds. Unexpected object ownership blocks cleanup instead of dropping
+application data. Repeated successful DELETE returns the retained revoked metadata.
+Database teardown returns 409 until all its access roles have been revoked.
+
+`expires_at` is enforced by PostgreSQL password authentication for **new sessions**.
+It does not terminate existing sessions. The controller owns a durable expiry
+scheduler and MUST call DELETE at expiry (and on explicit cancellation). There is
+no agent scheduler. Temporary roles use the existing per-database role quota.
+Use password authentication (SCRAM); trust/certificate authentication cannot be
+used to enforce password expiry. No untracked privilege escalation or manual role
+replacement should be performed for agent-managed lease roles.
+
+TypeScript callers can use `requireDatabaseAccessRoles`, `putDatabaseAccessRole`,
+`getDatabaseAccessRole`, and `revokeDatabaseAccessRole` from `@opsen/agent`.
+The PUT helper checks the capability before transmitting a password.

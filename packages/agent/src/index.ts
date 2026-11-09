@@ -46,3 +46,12 @@ export type { DatabaseRoleArgs, DatabaseRoleCreateResult } from './resources/dat
 // Imperative runtime lifecycle operations (independent of Pulumi desired resources).
 export { composeStop, composeStart, ingressStop, ingressStart } from './lifecycle'
 export type { ComposeLifecycleResult, IngressLifecycleResult } from './lifecycle'
+
+export {
+  TEMPORARY_ACCESS_ROLES_CAPABILITY,
+  requireDatabaseAccessRoles,
+  putDatabaseAccessRole,
+  getDatabaseAccessRole,
+  revokeDatabaseAccessRole,
+} from './database-access'
+export type { DatabaseAccessRoleRequest, DatabaseAccessRoleStatus } from './database-access'
