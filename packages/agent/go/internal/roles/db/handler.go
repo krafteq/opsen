@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/opsen/agent/internal/config"
 	"github.com/opsen/agent/internal/identity"
 )
 
 type Handler struct {
+	accessMu    sync.Mutex
 	cfg         *config.AgentConfig
 	clientStore *config.ClientStore
 	pg          *PgManager
@@ -27,8 +29,8 @@ func NewHandler(cfg *config.AgentConfig, clientStore *config.ClientStore, logger
 	trackerPath := cfg.Roles.Db.DataDir + "/db-state.json"
 	tracker, err := LoadResourceTracker(trackerPath, logger)
 	if err != nil {
-		logger.Warn("failed to load db resource tracker, starting fresh", "error", err)
-		tracker = NewResourceTracker(trackerPath, logger)
+		pg.Close()
+		return nil, fmt.Errorf("loading db resource tracker: %w", err)
 	}
 
 	return &Handler{cfg: cfg, clientStore: clientStore, pg: pg, tracker: tracker, logger: logger}, nil
@@ -78,6 +80,8 @@ type CreateDatabaseResponse struct {
 }
 
 func (h *Handler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
+	h.accessMu.Lock()
+	defer h.accessMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	if client.Db == nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "db role not allowed for this client"})
@@ -197,6 +201,8 @@ func (h *Handler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
 // ── Drop Database ───────────────────────────────────────
 
 func (h *Handler) DropDatabase(w http.ResponseWriter, r *http.Request) {
+	h.accessMu.Lock()
+	defer h.accessMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	name := r.PathValue("name")
 	if name == "" {
@@ -210,6 +216,14 @@ func (h *Handler) DropDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Leases must be explicitly revoked before database teardown, so a failed
+	// provider operation cannot discard the only durable ownership record.
+	for _, lease := range record.AccessRoles {
+		if lease.Status != "revoked" {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "revoke all access roles before deleting the database"})
+			return
+		}
+	}
 	// Drop database first (terminates connections)
 	if err := h.pg.DropDatabase(record.DatabaseName); err != nil {
 		h.logger.Error("failed to drop database", "database", record.DatabaseName, "error", err)
@@ -236,6 +250,8 @@ func (h *Handler) DropDatabase(w http.ResponseWriter, r *http.Request) {
 // ── Database Status ─────────────────────────────────────
 
 func (h *Handler) DatabaseStatus(w http.ResponseWriter, r *http.Request) {
+	h.accessMu.Lock()
+	defer h.accessMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	name := r.PathValue("name")
 
@@ -329,6 +345,8 @@ type UpdateDatabaseRequest struct {
 }
 
 func (h *Handler) UpdateDatabase(w http.ResponseWriter, r *http.Request) {
+	h.accessMu.Lock()
+	defer h.accessMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	if client == nil || client.Db == nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "db role not allowed for this client"})
@@ -414,6 +432,8 @@ type CreateRoleRequest struct {
 }
 
 func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
+	h.accessMu.Lock()
+	defer h.accessMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	dbName := r.PathValue("name")
 	username := r.PathValue("role")
@@ -444,7 +464,13 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	violations = append(violations, validatePassword(req.Password, username, client.Db)...)
 
 	// Check max roles per database
-	if client.Db.PerDatabase.MaxRoles > 0 && len(record.AdditionalRoles)+1 >= client.Db.PerDatabase.MaxRoles {
+	roleCount := len(record.AdditionalRoles) + 1
+	for _, lease := range record.AccessRoles {
+		if lease.Status != "revoked" {
+			roleCount++
+		}
+	}
+	if client.Db.PerDatabase.MaxRoles > 0 && roleCount >= client.Db.PerDatabase.MaxRoles {
 		violations = append(violations, fmt.Sprintf("max roles per database reached: %d", client.Db.PerDatabase.MaxRoles))
 	}
 
@@ -496,6 +522,8 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 // ── Drop Additional Role ────────────────────────────────
 
 func (h *Handler) DropRole(w http.ResponseWriter, r *http.Request) {
+	h.accessMu.Lock()
+	defer h.accessMu.Unlock()
 	client := identity.ClientFromContext(r.Context())
 	dbName := r.PathValue("name")
 	username := r.PathValue("role")

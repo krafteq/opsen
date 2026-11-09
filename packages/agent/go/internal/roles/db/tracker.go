@@ -5,21 +5,23 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
 // DatabaseRecord tracks a single provisioned database.
 type DatabaseRecord struct {
-	DatabaseName    string   `json:"database_name"`
-	OwnerRole       string   `json:"owner_role"`
-	AdditionalRoles []string `json:"additional_roles"`
-	ConnectionLimit int      `json:"connection_limit"`
-	MaxSizeMb       int      `json:"max_size_mb"`
-	Extensions      []string `json:"extensions"`
-	QuotaExceeded   bool     `json:"quota_exceeded"`
-	CreatedAt       string   `json:"created_at"`
-	ModifiedAt      string   `json:"modified_at"`
+	DatabaseName    string                       `json:"database_name"`
+	OwnerRole       string                       `json:"owner_role"`
+	AdditionalRoles []string                     `json:"additional_roles"`
+	AccessRoles     map[string]*AccessRoleRecord `json:"access_roles,omitempty"`
+	ConnectionLimit int                          `json:"connection_limit"`
+	MaxSizeMb       int                          `json:"max_size_mb"`
+	Extensions      []string                     `json:"extensions"`
+	QuotaExceeded   bool                         `json:"quota_exceeded"`
+	CreatedAt       string                       `json:"created_at"`
+	ModifiedAt      string                       `json:"modified_at"`
 }
 
 // ClientDatabases tracks all databases for one client.
@@ -65,15 +67,33 @@ func LoadResourceTracker(path string, logger *slog.Logger) (*ResourceTracker, er
 	return tracker, nil
 }
 
-func (t *ResourceTracker) save() {
+func (t *ResourceTracker) save() error {
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
-		t.logger.Error("failed to serialize db state", "error", err)
-		return
+		return err
 	}
-	if err := os.WriteFile(t.path, data, 0640); err != nil {
-		t.logger.Error("failed to write db state", "error", err)
+	f, err := os.CreateTemp(filepath.Dir(t.path), ".db-state-*")
+	if err != nil {
+		return err
 	}
+	defer os.Remove(f.Name())
+	if err = f.Chmod(0600); err == nil {
+		_, err = f.Write(data)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), t.path)
+	}
+	if err != nil {
+		t.logger.Error("failed to save db state", "error", err)
+	}
+	return err
 }
 
 // Set records or updates a database record.
@@ -181,6 +201,9 @@ func (t *ResourceTracker) RoleInUse(roleName string) bool {
 
 	for _, client := range t.Clients {
 		for _, record := range client.Databases {
+			if _, ok := record.AccessRoles[roleName]; ok {
+				return true
+			}
 			if record.OwnerRole == roleName {
 				return true
 			}
